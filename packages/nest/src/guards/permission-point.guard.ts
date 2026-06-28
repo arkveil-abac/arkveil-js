@@ -7,7 +7,7 @@ import {
   Logger,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
-import { Arkveil, type PermissionCheckRequest } from "arkveil";
+import { Arkveil, type ArkveilCode } from "arkveil";
 import { getRequestFromContext } from "../utils/get-request-from-context";
 
 export const PERMISSION_POINT_KEY = "arkveil:permission-point";
@@ -18,63 +18,37 @@ export class PermissionPointGuard implements CanActivate {
 
   constructor(
     private readonly reflector: Reflector,
-    private readonly arkveil: Arkveil
+    private readonly arkveil: Arkveil,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const actionId = this.reflector.getAllAndOverride<string>(
+    const code = this.reflector.getAllAndOverride<ArkveilCode>(
       PERMISSION_POINT_KEY,
-      [context.getHandler(), context.getClass()]
+      [context.getHandler(), context.getClass()],
     );
 
     // If no permission point is set, deny access
-    if (!actionId) {
-      this.logger.warn("[Arkveil] No permission point set for action");
+    if (!code) {
+      this.logger.warn("[Arkveil] No permission point set for handler");
       throw new ForbiddenException(
-        "Permission point is required for permission check"
+        "Permission point is required for permission check",
       );
     }
 
-    const request = getRequestFromContext(context);
+    const request = await getRequestFromContext(context);
 
     try {
-      const userId = request.user?.id || request.userId;
-
-      if (!userId) {
-        this.logger.warn("[Arkveil] No user ID found in request");
-        throw new UnauthorizedException(
-          "User ID is required for permission check"
-        );
-      }
-
-      const permissionRequest: PermissionCheckRequest = {
-        actionId,
-        user: { id: userId },
-        context: {},
-      };
-
-      if (request.user) {
-        permissionRequest.user = {
-          ...permissionRequest.user,
-          ...request.user,
-        };
-      }
-
-      permissionRequest.context = {
-        method: request.method,
-        url: request.url || request.path,
-        ip: request.ip,
-        ...request.arkveilContext,
-      };
+      const permissionRequest = await this.arkveil.buildPermissionRequest(
+        code,
+        request,
+      );
 
       const result = await this.arkveil.checkPermission(permissionRequest);
 
       if (!result.granted) {
-        this.logger.warn(
-          `[Arkveil] Access denied for user ${userId} to action ${actionId}`
-        );
+        this.logger.warn(`[Arkveil] Access denied to action ${code}`);
         throw new ForbiddenException(
-          "You do not have permission to perform this action"
+          "You do not have permission to perform this action",
         );
       }
 

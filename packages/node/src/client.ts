@@ -1,11 +1,17 @@
 import {
   Arkveil,
   type ArkveilParams,
-  type PermissionCheckRequest,
+  type ArkveilCode,
+  type ArkveilUser,
+  type ArkveilContext,
 } from "arkveil";
 
-export class ArkveilNodeClient extends Arkveil {
-  constructor(params: ArkveilParams) {
+export class ArkveilNodeClient<
+  TCode extends string = ArkveilCode,
+  TUser extends Record<string, any> = ArkveilUser,
+  TContext extends Record<string, any> = ArkveilContext,
+> extends Arkveil<TCode, TUser, TContext> {
+  constructor(params: ArkveilParams<TUser, TContext>) {
     super(params);
   }
 
@@ -16,42 +22,13 @@ export class ArkveilNodeClient extends Arkveil {
    * Usage:
    * app.post("/api/admin", arkveil.permissionPoint("content-service.article-delete"), handler)
    *
-   * @param actionId - The permission action ID to check
+   * @param code - The permission code to check
    * @returns Middleware function
    */
-  public permissionPoint(actionId: string | (string & {})) {
+  public permissionPoint(code: TCode) {
     return async (req: any, res: any, next?: any) => {
       try {
-        const userId = this.getUserId
-          ? await this.getUserId(req)
-          : req.user?.id || req.userId;
-
-        if (!userId) {
-          this.logger?.warn("[Arkveil] No user ID found in request");
-          return this.handleDenied(req, res, next);
-        }
-
-        const permissionRequest: PermissionCheckRequest = {
-          actionId,
-          user: { id: userId },
-          context: {},
-        };
-
-        if (this.getUserAttributes) {
-          const userAttributes = await this.getUserAttributes(req);
-          permissionRequest.user = {
-            ...permissionRequest.user,
-            ...userAttributes,
-          };
-        }
-
-        if (this.getContextAttributes) {
-          const contextAttributes = await this.getContextAttributes(req);
-          permissionRequest.context = {
-            ...permissionRequest.context,
-            ...contextAttributes,
-          };
-        }
+        const permissionRequest = await this.buildPermissionRequest(code, req);
 
         const result = await this.checkPermission(permissionRequest);
 
@@ -60,12 +37,10 @@ export class ArkveilNodeClient extends Arkveil {
             return next();
           }
           return;
-        } else {
-          this.logger?.warn(
-            `[Arkveil] Access denied for user ${userId} to action ${actionId}`
-          );
-          return this.handleDenied(req, res, next);
         }
+
+        this.logger?.warn(`[Arkveil] Access denied to action ${code}`);
+        return this.handleDenied(req, res, next);
       } catch (error) {
         this.logger?.error("[Arkveil] permissionPoint error:", error);
         return this.handleDenied(req, res, next);
@@ -81,7 +56,7 @@ export class ArkveilNodeClient extends Arkveil {
     req: any,
     res: any,
     next: any,
-    onDenied?: (req: any, res: any) => void | Promise<void>
+    onDenied?: (req: any, res: any) => void | Promise<void>,
   ) {
     // Use custom handler if provided (either in request or parameter)
     const customHandler = onDenied || this.onDenied;
@@ -105,7 +80,7 @@ export class ArkveilNodeClient extends Arkveil {
         JSON.stringify({
           error: "Access denied",
           reason: "You do not have permission to perform this action",
-        })
+        }),
       );
     }
   }
