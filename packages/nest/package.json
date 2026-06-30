@@ -1,7 +1,26 @@
 {
   "name": "@arkveil/nest",
   "version": "0.1.0",
-  "description": "NestJS SDK for Arkveil",
+  "description": "NestJS SDK for Arkveil — declarative ABAC permission checks via decorators and guards.",
+  "keywords": [
+    "arkveil",
+    "abac",
+    "nestjs",
+    "permissions",
+    "authorization",
+    "access-control",
+    "rbac",
+    "security"
+  ],
+  "homepage": "https://www.arkveil.com",
+  "bugs": "https://github.com/arkveil-abac/arkveil-js/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arkveil-abac/arkveil-js.git",
+    "directory": "packages/nest"
+  },
+  "license": "MIT",
+  "author": "Dan Zabrotski",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -22,38 +41,33 @@
   "publishConfig": {
     "access": "public"
   },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsup"
   },
-  "keywords": [
-    "arkveil",
-    "nestjs",
-    "permissions",
-    "authorization",
-    "access-control",
-    "rbac",
-    "security"
-  ],
   "dependencies": {
     "arkveil": "workspace:*"
-  },
-  "devDependencies": {
-    "@nestjs/common": "^11.1.8",
-    "@nestjs/core": "^11.1.8",
-    "@nestjs/graphql": "^13.2.0",
-    "@types/bun": "latest",
-    "reflect-metadata": "^0.2.2",
-    "tsup": "^8.5.1",
-    "typescript": "^5.9.3"
   },
   "peerDependencies": {
     "@nestjs/common": "^8.0.0 || ^9.0.0 || ^10.0.0 || ^11.0.0",
     "@nestjs/core": "^8.0.0 || ^9.0.0 || ^10.0.0 || ^11.0.0",
+    "@nestjs/graphql": "^10.0.0 || ^11.0.0 || ^12.0.0 || ^13.0.0",
     "reflect-metadata": "^0.1.0 || ^0.2.0"
   },
   "peerDependenciesMeta": {
     "@nestjs/graphql": {
       "optional": true
     }
+  },
+  "devDependencies": {
+    "@nestjs/common": "^11.1.8",
+    "@nestjs/core": "^11.1.8",
+    "@nestjs/graphql": "^13.2.0",
+    "@types/node": "^22",
+    "reflect-metadata": "^0.2.2",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
   }
 }

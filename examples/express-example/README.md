@@ -1,15 +1,23 @@
 # express-example
 
-To install dependencies:
+Reference app showing the `@arkveil/node` middleware with typed permission codes
+(`arkveil.generated.ts`). It also doubles as a compile-time check that unknown
+codes / attributes are rejected (see the `@ts-expect-error` lines in `index.ts`).
+
+Install from the repo root (pnpm workspace):
 
 ```bash
-bun install
+pnpm install
 ```
 
-To run:
+Typecheck:
 
 ```bash
-bun run index.ts
+pnpm --filter express-example exec tsc --noEmit
 ```
 
-This project was created using `bun init` in bun v1.2.17. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
+Run (Node has no built-in TS runner here; use tsx):
+
+```bash
+pnpm dlx tsx index.ts   # serves on http://localhost:3005
+```

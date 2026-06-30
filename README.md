@@ -229,7 +229,7 @@ Until the registry is augmented, codes stay `string` and `user` / `context` stay
 
 ## 🛠️ Development
 
-This project uses [Turborepo](https://turborepo.com/) for monorepo management and [Bun](https://bun.com/) as the JavaScript runtime.
+This project uses [Turborepo](https://turborepo.com/) for monorepo orchestration and [pnpm](https://pnpm.io/) workspaces. Run `pnpm install`, then `pnpm run build` / `pnpm run check-types`. Publish all packages from the root with `pnpm run release`.
 
 ## 📄 License
 

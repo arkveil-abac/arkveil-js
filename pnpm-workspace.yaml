@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "examples/*"
+
+# tsup's bundler. Allowed to run its install script so pnpm v10 stops warning.
+onlyBuiltDependencies:
+  - esbuild

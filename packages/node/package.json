@@ -1,6 +1,29 @@
 {
   "name": "@arkveil/node",
   "version": "0.1.0",
+  "description": "Node.js SDK for Arkveil — permission middleware for Express, Fastify, and other HTTP frameworks.",
+  "keywords": [
+    "arkveil",
+    "abac",
+    "authorization",
+    "access-control",
+    "permissions",
+    "rbac",
+    "security",
+    "express",
+    "fastify",
+    "middleware",
+    "node"
+  ],
+  "homepage": "https://www.arkveil.com",
+  "bugs": "https://github.com/arkveil-abac/arkveil-js/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arkveil-abac/arkveil-js.git",
+    "directory": "packages/node"
+  },
+  "license": "MIT",
+  "author": "Dan Zabrotski",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -21,17 +44,18 @@
   "publishConfig": {
     "access": "public"
   },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsup"
   },
-  "devDependencies": {
-    "@types/bun": "latest",
-    "tsup": "^8.5.1"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
-  },
   "dependencies": {
     "arkveil": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsup": "^8.5.1",
+    "typescript": "^5"
   }
 }

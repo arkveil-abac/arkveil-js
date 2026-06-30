@@ -3,14 +3,14 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
-  "devDependencies": {
-    "@types/bun": "latest",
-    "@types/express": "^5.0.3"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
-  },
   "dependencies": {
+    "@arkveil/node": "workspace:*",
+    "arkveil": "workspace:*",
     "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^22",
+    "typescript": "^5"
   }
 }

@@ -1,6 +1,26 @@
 {
   "name": "arkveil",
   "version": "0.1.0",
+  "description": "Runtime-agnostic core SDK for Arkveil — a lightweight, comprehensive ABAC platform for fine-grained access control.",
+  "keywords": [
+    "arkveil",
+    "abac",
+    "authorization",
+    "access-control",
+    "permissions",
+    "rbac",
+    "security",
+    "fine-grained"
+  ],
+  "homepage": "https://www.arkveil.com",
+  "bugs": "https://github.com/arkveil-abac/arkveil-js/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arkveil-abac/arkveil-js.git",
+    "directory": "packages/arkveil"
+  },
+  "license": "MIT",
+  "author": "Dan Zabrotski",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -21,16 +41,17 @@
   "publishConfig": {
     "access": "public"
   },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "build": "tsup",
-    "test": "bun test",
-    "test:watch": "bun test --watch",
-    "test:coverage": "bun test --coverage"
+    "prepublishOnly": "pnpm run check-types && pnpm run build",
+    "check-types": "tsc --noEmit",
+    "build": "tsup"
   },
   "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
+    "@types/node": "^22",
+    "tsup": "^8.5.1",
     "typescript": "^5"
   }
 }
