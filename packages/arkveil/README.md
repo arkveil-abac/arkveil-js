@@ -125,6 +125,100 @@ timeouts, and transient `5xx` / `429` responses are retried with exponential
 backoff; if the check ultimately fails it resolves to `{ granted: false }`
 (fail-closed).
 
+## Row-level data protection
+
+Arkveil can also protect **data** (datasets = database tables). The SDK's job
+is to obtain SQL enforcement artifacts from Arkveil and apply them to your
+application's own queries — it never receives policies, only rendered SQL
+(PostgreSQL-flavored today). Both endpoints share the base URL and API-key
+auth with `checkPermission`, and are served identically by the Arkveil kernel
+and a self-hosted `arkveil-runtime` sidecar — point `serviceUrl` at either.
+
+A **dataset id** is exactly three dot-separated lowercase segments:
+`datasource.schema.table`. The SDK normalizes (trim + lowercase) before
+sending and throws on any other shape — there is no 2-segment shorthand and no
+4-segment form.
+
+### `buildReadCondition(request)` — filtering reads
+
+```typescript
+const { readCondition } = await arkveil.buildReadCondition({
+  datasetId: "billing.public.payments",
+  user: { id: "user-123", role: "manager" },
+  context: {},
+  alias: "p", // pass whenever the protected table is aliased or joined
+});
+
+// AND it into your query's WHERE clause:
+const rows = await db.query(
+  `SELECT * FROM payments p WHERE p.tenant_id = $1 AND (${readCondition})`,
+  [tenantId],
+);
+```
+
+`readCondition` is one SQL boolean expression. With `alias` omitted, columns
+are qualified `"schema"."table"."column"`. **`FALSE` is a normal response**
+("no applicable policy ⇒ no rows") — apply it like any other condition; never
+fall back to unfiltered access.
+
+### `buildWriteChecks(request)` — validating mutations
+
+```typescript
+const { writeSql } = await arkveil.buildWriteChecks({
+  datasetId: "billing.public.payments",
+  user: { id: "user-123", role: "manager" },
+  context: {},
+  ids: [42, 7], // primary keys the mutation touches (sent as strings)
+});
+
+// Inside the mutation's transaction:
+const [{ allowed }] = await tx.query(`${writeSql} AS allowed`);
+if (!allowed) throw rollback();
+```
+
+`writeSql` is a single statement returning one boolean: `true` ⇒ the mutation
+touches no forbidden row. Execute it against **your** database, inside the
+mutation's transaction, and roll back on `false`. *When* it runs is part of
+the contract:
+
+| Mutation | Execute `writeSql`         | With ids…                  |
+| -------- | -------------------------- | -------------------------- |
+| CREATE   | **after** the insert       | the just-inserted rows' ids |
+| UPDATE   | **before and after**       | the ids the statement targets |
+| DELETE   | **before** the delete      | the ids the statement targets |
+
+(Before-UPDATE proves the user may touch those rows at all; after-UPDATE
+proves the modified rows are still within their writable set. Rows that don't
+exist are not a violation — deleting an already-deleted id stays idempotent.)
+
+When `ids` is omitted, `writeSql` comes back with a literal `{{ids}}`
+placeholder; fill it with the `substituteIds` helper, which renders the values
+as escaped SQL literals:
+
+```typescript
+import { substituteIds } from "arkveil";
+
+const sql = substituteIds(writeSql, insertedIds);
+```
+
+### Fail-closed behavior
+
+- A well-formed dataset id that isn't registered in Arkveil returns
+  `writeSql: "SELECT FALSE"` with `reason: "METADATA_MISSING"` — a
+  **configuration gap**, not a policy deny. The SDK logs it distinctly;
+  compare against the exported `METADATA_MISSING` constant to surface it.
+- Transport failures and non-OK responses never widen access: after retries,
+  `buildReadCondition` resolves to `{ readCondition: "FALSE", mode: "UNAVAILABLE" }`
+  and `buildWriteChecks` to `{ writeSql: "SELECT FALSE", invariantSql: [], mode: "UNAVAILABLE" }`.
+- `mode` is `"NORMAL"` unless the serving side is degraded (e.g. a sidecar
+  past its staleness bound). Any other value is logged as a warning — honor
+  the SQL, watch the diagnostics.
+- `invariantSql` is always `[]` today; it is wired through for when INVARIANT
+  policy evaluation lands.
+
+Field-level masking (PROJECTION policies) has no HTTP contract yet and is not
+part of this SDK.
+
 ## Features
 
 - 🌍 **Runtime agnostic** — works in any JavaScript environment with `fetch`

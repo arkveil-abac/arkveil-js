@@ -10,3 +10,16 @@ export {
   type PermissionCheckRequest,
   type PermissionCheckResponse,
 } from "./arkveil";
+
+export {
+  normalizeDatasetId,
+  substituteIds,
+  IDS_PLACEHOLDER,
+  METADATA_MISSING,
+  MODE_UNAVAILABLE,
+  type ReadConditionRequest,
+  type ReadConditionResponse,
+  type WriteChecksRequest,
+  type WriteChecksResponse,
+  type WriteCheckId,
+} from "./data-conditions";

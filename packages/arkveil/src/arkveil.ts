@@ -1,5 +1,14 @@
 import type { Logger } from "./types/logger";
 import { fetchWithRetry } from "./utils/fetch-with-retry";
+import {
+  METADATA_MISSING,
+  MODE_UNAVAILABLE,
+  normalizeDatasetId,
+  type ReadConditionRequest,
+  type ReadConditionResponse,
+  type WriteChecksRequest,
+  type WriteChecksResponse,
+} from "./data-conditions";
 
 /**
  * Registry interface for permission codes.
@@ -226,6 +235,155 @@ export class Arkveil<
       return {
         granted: false,
       };
+    }
+  }
+
+  /**
+   * Fetch the SQL read condition for a dataset: one boolean expression to AND
+   * into the query's WHERE clause (`POST /abac/conditions/read`).
+   *
+   * `readCondition: "FALSE"` is a normal response ("no applicable policy ⇒ no
+   * rows") — apply it like any other condition; never fall back to unfiltered
+   * access. Pass `alias` whenever the protected table is aliased or joined.
+   *
+   * Fail-closed: transport failures and non-OK responses are logged and
+   * return `{ readCondition: "FALSE", mode: "UNAVAILABLE" }`, so a degraded
+   * Arkveil never widens access. A malformed `datasetId` throws instead —
+   * that is a programming/configuration error, not a runtime condition.
+   */
+  public async buildReadCondition(
+    request: ReadConditionRequest<TUser, TContext>,
+  ): Promise<ReadConditionResponse> {
+    const datasetId = normalizeDatasetId(request.datasetId);
+
+    try {
+      const data = await this.postConditions<ReadConditionResponse>("read", {
+        datasetId,
+        user: request.user,
+        context: request.context,
+        ...(request.alias !== undefined ? { alias: request.alias } : {}),
+      });
+      this.flagDegradedMode("read condition", datasetId, data.mode);
+      return data;
+    } catch (error) {
+      this.logger?.error(
+        `[Arkveil] Read condition request failed for dataset ${datasetId}; failing closed (FALSE):`,
+        error,
+      );
+      return { readCondition: "FALSE", mode: MODE_UNAVAILABLE };
+    }
+  }
+
+  /**
+   * Fetch the SQL write check for a mutation (`POST /abac/conditions/write`):
+   * a single statement returning one boolean — `true` ⇒ the mutation touches
+   * no forbidden row. Execute it against the application's database inside
+   * the mutation's transaction and roll back on `false`.
+   *
+   * When it runs relative to the mutation statement is part of the contract:
+   * - CREATE: **after** the insert (the new rows must exist to be evaluated),
+   *   with the just-inserted ids.
+   * - UPDATE: **before and after** the update, with the targeted ids.
+   * - DELETE: **before** the delete, with the targeted ids.
+   *
+   * `ids` are sent as strings; the server casts them to the dataset's
+   * primary-key type. With `ids` omitted, `writeSql` contains the `{{ids}}`
+   * placeholder to fill via `substituteIds`. A `reason` of
+   * `"METADATA_MISSING"` means the dataset isn't registered in Arkveil — a
+   * configuration gap, not a policy deny.
+   *
+   * Fail-closed: transport failures and non-OK responses are logged and
+   * return `{ writeSql: "SELECT FALSE", invariantSql: [], mode: "UNAVAILABLE" }`.
+   * A malformed `datasetId` throws instead — that is a
+   * programming/configuration error, not a runtime condition.
+   */
+  public async buildWriteChecks(
+    request: WriteChecksRequest<TUser, TContext>,
+  ): Promise<WriteChecksResponse> {
+    const datasetId = normalizeDatasetId(request.datasetId);
+
+    try {
+      const data = await this.postConditions<WriteChecksResponse>("write", {
+        datasetId,
+        user: request.user,
+        context: request.context,
+        ...(request.ids !== undefined
+          ? { ids: request.ids.map((id) => String(id)) }
+          : {}),
+      });
+      if (data.reason === METADATA_MISSING) {
+        this.logger?.error(
+          `[Arkveil] Write check for dataset ${datasetId} denied with reason METADATA_MISSING: ` +
+            "the dataset is not registered in Arkveil (configuration gap, not a policy deny).",
+        );
+      }
+      this.flagDegradedMode("write checks", datasetId, data.mode);
+      return data;
+    } catch (error) {
+      this.logger?.error(
+        `[Arkveil] Write checks request failed for dataset ${datasetId}; failing closed (SELECT FALSE):`,
+        error,
+      );
+      return {
+        writeSql: "SELECT FALSE",
+        invariantSql: [],
+        mode: MODE_UNAVAILABLE,
+      };
+    }
+  }
+
+  /**
+   * POST to a data-conditions endpoint. Shares base URL, versioning, auth,
+   * and retry behavior with `checkPermission`; throws on non-OK responses so
+   * the callers can apply their fail-closed defaults.
+   */
+  private async postConditions<T>(
+    endpoint: "read" | "write",
+    body: Record<string, unknown>,
+  ): Promise<T> {
+    const url = `${this.serviceUrl}/api/${this.version}/abac/conditions/${endpoint}`;
+
+    const response = await fetchWithRetry(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": `${this.apiKey}`,
+        },
+        body: JSON.stringify(body),
+      },
+      {
+        timeout: this.timeout,
+        retryAttempts: this.retryAttempts,
+      },
+    );
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => "");
+      throw new Error(
+        `Conditions request failed: ${response.status} ${response.statusText}${
+          message ? ` — ${message}` : ""
+        }`,
+      );
+    }
+
+    // Responses gain fields additively; anything unknown is passed through.
+    return (await response.json()) as T;
+  }
+
+  /** Non-"NORMAL" modes mean the serving side is degraded (e.g. a sidecar
+   * past its staleness bound): the SQL is still honored, but the call is
+   * flagged in diagnostics. */
+  private flagDegradedMode(
+    operation: string,
+    datasetId: string,
+    mode: string,
+  ): void {
+    if (mode !== "NORMAL") {
+      this.logger?.warn(
+        `[Arkveil] ${operation} for dataset ${datasetId} served in degraded mode "${mode}".`,
+      );
     }
   }
 

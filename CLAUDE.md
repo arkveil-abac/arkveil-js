@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Arkveil is an ABAC (attribute-based access control) platform. This repo is the **JavaScript/TypeScript SDK monorepo** — a thin client that calls the hosted Arkveil service (`POST /api/{version}/abac/permissions/check`) to decide whether an action is allowed. It does **not** contain the permission engine itself.
+Arkveil is an ABAC (attribute-based access control) platform. This repo is the **JavaScript/TypeScript SDK monorepo** — a thin client that calls the Arkveil service to (a) decide whether an action is allowed (`POST /api/{version}/abac/permissions/check`) and (b) fetch SQL enforcement artifacts for row-level data protection (`POST /api/{version}/abac/conditions/read` and `/write` — see `packages/arkveil/src/data-conditions.ts`). The service URL may be the hosted kernel or a self-hosted `arkveil-runtime` sidecar (identical contract; the base URL is opaque config). It does **not** contain the permission engine itself — for data, the SDK receives rendered SQL, never policies.
 
 pnpm + Turborepo monorepo (workspaces defined in `pnpm-workspace.yaml`). Three published packages under `packages/` plus runnable examples under `examples/`.
 
@@ -23,7 +23,7 @@ pnpm --filter arkveil run build          # build a single package (or: turbo run
 pnpm --filter express-example exec tsc --noEmit   # typecheck the example
 ```
 
-**Note:** there is **no test runner configured** — no test files exist and no `test` script is defined (wire up vitest if you add tests). `pnpm run lint` is a no-op (no package defines a `lint` script).
+**Testing:** vitest is wired up in `packages/arkveil` (`pnpm run test` at the root runs `turbo run test`; tests live in `packages/arkveil/tests/` and mock global `fetch` — no live calls). `node`/`nest` have no tests yet. `pnpm run lint` is a no-op (no package defines a `lint` script).
 
 `pnpm run build` is wired so turbo's `build` `dependsOn` `^build` — **core builds before `node`/`nest`**. After changing core types, rebuild core (or run the top-level build) so the dependents typecheck against the new output.
 
@@ -35,7 +35,10 @@ pnpm uses an isolated (non-hoisted) `node_modules`, so every import must be a de
 `@arkveil/node`'s `ArkveilNodeClient` **extends** the core `Arkveil` class (and re-exports it as `Arkveil`). The core's `handleDenied()` throws by design; the Node subclass overrides it to send a 403. NestJS instead wraps the core class in a provider + guard rather than subclassing. So core logic (request building, `checkPermission`, retry) lives in one place and platform packages only add transport/denial behavior.
 
 ### Fail-closed
-`checkPermission` never throws to the caller: network errors, timeouts, and non-OK responses are logged and return `{ granted: false }`. `fetchWithRetry` (core) retries `429`/`5xx`/network failures with exponential backoff + jitter; 4xx (except 429) are not retried. Preserve this fail-closed contract when touching the request path.
+`checkPermission` never throws to the caller: network errors, timeouts, and non-OK responses are logged and return `{ granted: false }`. The data methods follow the same contract: `buildReadCondition` falls back to `{ readCondition: "FALSE", mode: "UNAVAILABLE" }` and `buildWriteChecks` to `{ writeSql: "SELECT FALSE", invariantSql: [], mode: "UNAVAILABLE" }` — a degraded Arkveil never widens access. The one deliberate exception: a malformed dataset id (not three lowercase identifier segments) **throws**, because that is a programming/configuration error, not a runtime condition. `fetchWithRetry` (core) retries `429`/`5xx`/network failures with exponential backoff + jitter; 4xx (except 429) are not retried. Preserve this fail-closed contract when touching the request path.
+
+### Data conditions (row-level security)
+`buildReadCondition`/`buildWriteChecks` live on the core `Arkveil` class (inherited by `node`, provided by `nest`). Wire-contract rules encoded there: dataset ids are normalized (trim + lowercase) client-side so cache keys/logs agree with server matching; `ids` are always strings on the wire; response parsing ignores unknown fields (additive contract); non-`"NORMAL"` `mode` is honored but logged as degraded; `reason: "METADATA_MISSING"` (dataset not registered) is logged distinctly from a policy deny; the `{{ids}}` placeholder in `writeSql` is filled via the exported `substituteIds` helper. There is **no projection endpoint** — do not stub one against a guessed contract.
 
 ### Typed codes & attributes (the central design — read before editing types)
 The core declares three **empty** registry interfaces — `ArkveilCodeRegistry`, `ArkveilUserRegistry`, `ArkveilContextRegistry` — and three conditional types (`ArkveilCode`, `ArkveilUser`, `ArkveilContext`) that resolve to the registered type **or fall back** to `string` / `Record<string, any>` when the registry is un-augmented. This fallback is what keeps untyped usage compiling; do not remove it.

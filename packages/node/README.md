@@ -108,6 +108,16 @@ Creates a middleware that checks permissions before allowing access to the route
 - Calls `onDenied` handler if permission is denied
 - Works with Express, Fastify, and other Node.js HTTP frameworks
 
+## Row-level data protection
+
+The client inherits the core SDK's data-protection methods —
+`buildReadCondition` (a SQL condition to AND into your SELECTs) and
+`buildWriteChecks` (a boolean statement to run inside a mutation's
+transaction) — plus the `substituteIds` helper. See the
+[`arkveil` core README](https://www.npmjs.com/package/arkveil) for the full
+contract, including when the write check must run relative to
+CREATE/UPDATE/DELETE and the fail-closed semantics.
+
 ## License
 
 MIT

@@ -302,6 +302,38 @@ export class ForbiddenExceptionFilter implements ExceptionFilter {
 Request → @PermissionPoint Decorator → PermissionPointGuard → Arkveil Service → Permission Check → Endpoint Handler
 ```
 
+## Row-level data protection
+
+The module provides the core `Arkveil` client, so you can inject it and use
+the data-protection methods — `buildReadCondition` (a SQL condition to AND
+into your SELECTs) and `buildWriteChecks` (a boolean statement to run inside a
+mutation's transaction):
+
+```typescript
+import { Injectable } from "@nestjs/common";
+import { Arkveil } from "arkveil";
+
+@Injectable()
+export class PaymentsService {
+  constructor(private readonly arkveil: Arkveil) {}
+
+  async listPayments(user: UserAttributes) {
+    const { readCondition } = await this.arkveil.buildReadCondition({
+      datasetId: "billing.public.payments",
+      user,
+      context: {},
+      alias: "p",
+    });
+    return this.db.query(`SELECT * FROM payments p WHERE ${readCondition}`);
+  }
+}
+```
+
+See the [`arkveil` core README](https://www.npmjs.com/package/arkveil) for the
+full contract, including when the write check must run relative to
+CREATE/UPDATE/DELETE, the `{{ids}}` template helper, and the fail-closed
+semantics.
+
 ## Best Practices
 
 1. **Always configure `getUserAttributes`** - This is how user identity and attributes reach the permission check
