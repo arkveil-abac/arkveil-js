@@ -46,7 +46,7 @@ app.post(
       success: true,
       message: "Article deleted successfully",
     });
-  }
+  },
 );
 ```
 

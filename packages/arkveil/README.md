@@ -30,7 +30,7 @@ const arkveil = new Arkveil({
 });
 
 const result = await arkveil.checkPermission({
-  code: "content-service.article-delete",
+  actionCode: "content-service.article-delete",
   user: { id: "user-123", role: "admin" },
   context: { region: "EU" },
 });
@@ -76,7 +76,7 @@ import { Arkveil } from "arkveil";
 import "./arkveil.generated";
 
 await arkveil.checkPermission({
-  code: "content-service.article-delete", // ✅ autocompletes
+  actionCode: "content-service.article-delete", // ✅ autocompletes
   user: { role: "admin" }, // ✅ rejects unknown keys
   context: { region: "EU" },
 });
@@ -106,17 +106,17 @@ stay `Record<string, any>`, so untyped usage keeps working.
 
 ### `new Arkveil(options)`
 
-| Option                 | Type                                  | Default  | Description                                       |
-| ---------------------- | ------------------------------------- | -------- | ------------------------------------------------- |
-| `serviceUrl`           | `string` (required)                   | —        | Arkveil API service URL                           |
-| `apiKey`               | `string` (required)                   | —        | Your API key                                      |
-| `version`              | `"v1"`                                | `"v1"`   | API version                                       |
-| `timeout`              | `number`                              | `5000`   | Per-request timeout in milliseconds               |
-| `retryAttempts`        | `number`                              | `3`      | Attempts for failed / transient requests          |
-| `getUserAttributes`    | `(req) => user`                       | —        | Extract user attributes from a request            |
-| `getContextAttributes` | `(req) => context`                    | —        | Extract context attributes from a request         |
-| `logger`               | `Logger`                              | —        | Custom logger instance                            |
-| `onDenied`             | `(req, res, reason?) => void`         | —        | Custom handler for denied access                  |
+| Option                 | Type                          | Default | Description                               |
+| ---------------------- | ----------------------------- | ------- | ----------------------------------------- |
+| `serviceUrl`           | `string` (required)           | —       | Arkveil API service URL                   |
+| `apiKey`               | `string` (required)           | —       | Your API key                              |
+| `version`              | `"v1"`                        | `"v1"`  | API version                               |
+| `timeout`              | `number`                      | `5000`  | Per-request timeout in milliseconds       |
+| `retryAttempts`        | `number`                      | `3`     | Attempts for failed / transient requests  |
+| `getUserAttributes`    | `(req) => user`               | —       | Extract user attributes from a request    |
+| `getContextAttributes` | `(req) => context`            | —       | Extract context attributes from a request |
+| `logger`               | `Logger`                      | —       | Custom logger instance                    |
+| `onDenied`             | `(req, res, reason?) => void` | —       | Custom handler for denied access          |
 
 ### `checkPermission(request)`
 
@@ -134,7 +134,7 @@ application's own queries — it never receives policies, only rendered SQL
 auth with `checkPermission`, and are served identically by the Arkveil kernel
 and a self-hosted `arkveil-runtime` sidecar — point `serviceUrl` at either.
 
-A **dataset id** is exactly three dot-separated lowercase segments:
+A **dataset code** is exactly three dot-separated lowercase segments:
 `datasource.schema.table`. The SDK normalizes (trim + lowercase) before
 sending and throws on any other shape — there is no 2-segment shorthand and no
 4-segment form.
@@ -143,7 +143,7 @@ sending and throws on any other shape — there is no 2-segment shorthand and no
 
 ```typescript
 const { readCondition } = await arkveil.buildReadCondition({
-  datasetId: "billing.public.payments",
+  datasetCode: "billing.public.payments",
   user: { id: "user-123", role: "manager" },
   context: {},
   alias: "p", // pass whenever the protected table is aliased or joined
@@ -165,7 +165,7 @@ fall back to unfiltered access.
 
 ```typescript
 const { writeSql } = await arkveil.buildWriteChecks({
-  datasetId: "billing.public.payments",
+  datasetCode: "billing.public.payments",
   user: { id: "user-123", role: "manager" },
   context: {},
   ids: [42, 7], // primary keys the mutation touches (sent as strings)
@@ -178,14 +178,14 @@ if (!allowed) throw rollback();
 
 `writeSql` is a single statement returning one boolean: `true` ⇒ the mutation
 touches no forbidden row. Execute it against **your** database, inside the
-mutation's transaction, and roll back on `false`. *When* it runs is part of
+mutation's transaction, and roll back on `false`. _When_ it runs is part of
 the contract:
 
-| Mutation | Execute `writeSql`         | With ids…                  |
-| -------- | -------------------------- | -------------------------- |
-| CREATE   | **after** the insert       | the just-inserted rows' ids |
-| UPDATE   | **before and after**       | the ids the statement targets |
-| DELETE   | **before** the delete      | the ids the statement targets |
+| Mutation | Execute `writeSql`    | With ids…                     |
+| -------- | --------------------- | ----------------------------- |
+| CREATE   | **after** the insert  | the just-inserted rows' ids   |
+| UPDATE   | **before and after**  | the ids the statement targets |
+| DELETE   | **before** the delete | the ids the statement targets |
 
 (Before-UPDATE proves the user may touch those rows at all; after-UPDATE
 proves the modified rows are still within their writable set. Rows that don't
@@ -203,7 +203,7 @@ const sql = substituteIds(writeSql, insertedIds);
 
 ### Fail-closed behavior
 
-- A well-formed dataset id that isn't registered in Arkveil returns
+- A well-formed dataset code that isn't registered in Arkveil returns
   `writeSql: "SELECT FALSE"` with `reason: "METADATA_MISSING"` — a
   **configuration gap**, not a policy deny. The SDK logs it distinctly;
   compare against the exported `METADATA_MISSING` constant to surface it.

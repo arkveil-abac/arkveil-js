@@ -26,7 +26,7 @@ import {
 export function PermissionPoint(code: ArkveilCode) {
   return applyDecorators(
     SetMetadata(PERMISSION_POINT_KEY, code),
-    UseGuards(PermissionPointGuard)
+    UseGuards(PermissionPointGuard),
   );
 }
 
@@ -49,6 +49,6 @@ export function createPermissionPoint<TCode extends string = ArkveilCode>() {
   return (code: TCode) =>
     applyDecorators(
       SetMetadata(PERMISSION_POINT_KEY, code),
-      UseGuards(PermissionPointGuard)
+      UseGuards(PermissionPointGuard),
     );
 }

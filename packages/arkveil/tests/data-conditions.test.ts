@@ -1,38 +1,38 @@
 import { describe, it, expect } from "vitest";
 import {
-  normalizeDatasetId,
+  normalizeDatasetCode,
   substituteIds,
   IDS_PLACEHOLDER,
 } from "../src/data-conditions";
 
-describe("normalizeDatasetId", () => {
+describe("normalizeDatasetCode", () => {
   it("accepts a canonical three-segment id unchanged", () => {
-    expect(normalizeDatasetId("billing.public.payments")).toBe(
+    expect(normalizeDatasetCode("billing.public.payments")).toBe(
       "billing.public.payments",
     );
   });
 
   it("normalizes case and surrounding whitespace the way the server does", () => {
-    expect(normalizeDatasetId("  Billing.PUBLIC.Payments ")).toBe(
+    expect(normalizeDatasetCode("  Billing.PUBLIC.Payments ")).toBe(
       "billing.public.payments",
     );
   });
 
   it("rejects the 2-segment pre-release shorthand", () => {
-    expect(() => normalizeDatasetId("billing.payments")).toThrowError(
-      "datasetId must have exactly 3 segments (datasource.schema.table): billing.payments",
+    expect(() => normalizeDatasetCode("billing.payments")).toThrowError(
+      "datasetCode must have exactly 3 segments (datasource.schema.table): billing.payments",
     );
   });
 
   it("rejects a 4-segment (database) form", () => {
-    expect(() => normalizeDatasetId("db.billing.public.payments")).toThrow();
+    expect(() => normalizeDatasetCode("db.billing.public.payments")).toThrow();
   });
 
   it("rejects segments that are not identifiers", () => {
-    expect(() => normalizeDatasetId("billing.public.9lives")).toThrow();
-    expect(() => normalizeDatasetId("billing..payments")).toThrow();
-    expect(() => normalizeDatasetId("billing.pub lic.payments")).toThrow();
-    expect(() => normalizeDatasetId("")).toThrow();
+    expect(() => normalizeDatasetCode("billing.public.9lives")).toThrow();
+    expect(() => normalizeDatasetCode("billing..payments")).toThrow();
+    expect(() => normalizeDatasetCode("billing.pub lic.payments")).toThrow();
+    expect(() => normalizeDatasetCode("")).toThrow();
   });
 });
 
@@ -59,7 +59,9 @@ describe("substituteIds", () => {
 
   it("rejects SQL without the placeholder (ids were already inlined)", () => {
     expect(() =>
-      substituteIds(`SELECT (NOT EXISTS (SELECT 1 WHERE "seq" IN (42)))`, ["42"]),
+      substituteIds(`SELECT (NOT EXISTS (SELECT 1 WHERE "seq" IN (42)))`, [
+        "42",
+      ]),
     ).toThrowError(/no \{\{ids\}\} placeholder/);
   });
 });

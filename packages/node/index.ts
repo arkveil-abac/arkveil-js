@@ -11,7 +11,7 @@ export type {
   PermissionCheckResponse,
 } from "arkveil";
 export {
-  normalizeDatasetId,
+  normalizeDatasetCode,
   substituteIds,
   IDS_PLACEHOLDER,
   METADATA_MISSING,

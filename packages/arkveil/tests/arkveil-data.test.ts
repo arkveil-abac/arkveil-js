@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 describe("buildReadCondition", () => {
-  it("posts to /abac/conditions/read with the api key and normalized dataset id", async () => {
+  it("posts to /abac/conditions/read with the api key and normalized dataset code", async () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse({ readCondition: `"p"."amount" > 0`, mode: "NORMAL" }),
     );
@@ -36,19 +36,27 @@ describe("buildReadCondition", () => {
 
     const logger = makeLogger();
     const result = await makeClient(logger).buildReadCondition({
-      datasetId: " Billing.Public.PAYMENTS ",
+      datasetCode: " Billing.Public.PAYMENTS ",
       user: { id: "u1" },
       context: { region: "EU" },
       alias: "p",
     });
 
-    expect(result).toEqual({ readCondition: `"p"."amount" > 0`, mode: "NORMAL" });
+    expect(result).toEqual({
+      readCondition: `"p"."amount" > 0`,
+      mode: "NORMAL",
+    });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
     expect(url).toBe("http://api.test/api/v1/abac/conditions/read");
-    expect((init.headers as Record<string, string>)["x-api-key"]).toBe("test-key");
+    expect((init.headers as Record<string, string>)["x-api-key"]).toBe(
+      "test-key",
+    );
     expect(JSON.parse(init.body as string)).toEqual({
-      datasetId: "billing.public.payments",
+      datasetCode: "billing.public.payments",
       user: { id: "u1" },
       context: { region: "EU" },
       alias: "p",
@@ -64,24 +72,29 @@ describe("buildReadCondition", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await makeClient(makeLogger()).buildReadCondition({
-      datasetId: "billing.public.payments",
+      datasetCode: "billing.public.payments",
       user: {},
       context: {},
     });
 
-    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const [, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
     expect(JSON.parse(init.body as string)).not.toHaveProperty("alias");
   });
 
   it("treats FALSE as a normal response, not an error", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse({ readCondition: "FALSE", mode: "NORMAL" })),
+      vi.fn(async () =>
+        jsonResponse({ readCondition: "FALSE", mode: "NORMAL" }),
+      ),
     );
 
     const logger = makeLogger();
     const result = await makeClient(logger).buildReadCondition({
-      datasetId: "billing.public.payments",
+      datasetCode: "billing.public.payments",
       user: {},
       context: {},
     });
@@ -94,12 +107,16 @@ describe("buildReadCondition", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
-        jsonResponse({ readCondition: "TRUE", mode: "NORMAL", future: "field" }),
+        jsonResponse({
+          readCondition: "TRUE",
+          mode: "NORMAL",
+          future: "field",
+        }),
       ),
     );
 
     const result = await makeClient(makeLogger()).buildReadCondition({
-      datasetId: "billing.public.payments",
+      datasetCode: "billing.public.payments",
       user: {},
       context: {},
     });
@@ -117,7 +134,7 @@ describe("buildReadCondition", () => {
 
     const logger = makeLogger();
     const result = await makeClient(logger).buildReadCondition({
-      datasetId: "billing.public.payments",
+      datasetCode: "billing.public.payments",
       user: {},
       context: {},
     });
@@ -136,7 +153,7 @@ describe("buildReadCondition", () => {
 
     const logger = makeLogger();
     const result = await makeClient(logger).buildReadCondition({
-      datasetId: "billing.public.payments",
+      datasetCode: "billing.public.payments",
       user: {},
       context: {},
     });
@@ -154,7 +171,7 @@ describe("buildReadCondition", () => {
     );
 
     const result = await makeClient(makeLogger()).buildReadCondition({
-      datasetId: "billing.public.payments",
+      datasetCode: "billing.public.payments",
       user: {},
       context: {},
     });
@@ -162,13 +179,13 @@ describe("buildReadCondition", () => {
     expect(result).toEqual({ readCondition: "FALSE", mode: "UNAVAILABLE" });
   });
 
-  it("throws on a malformed dataset id without calling the server", async () => {
+  it("throws on a malformed dataset code without calling the server", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
       makeClient(makeLogger()).buildReadCondition({
-        datasetId: "billing.payments",
+        datasetCode: "billing.payments",
         user: {},
         context: {},
       }),
@@ -185,13 +202,16 @@ describe("buildWriteChecks", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await makeClient(makeLogger()).buildWriteChecks({
-      datasetId: "billing.public.payments",
+      datasetCode: "billing.public.payments",
       user: { id: "u1" },
       context: {},
       ids: [42, "7", 10n],
     });
 
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
     expect(url).toBe("http://api.test/api/v1/abac/conditions/write");
     expect(JSON.parse(init.body as string).ids).toEqual(["42", "7", "10"]);
   });
@@ -203,12 +223,15 @@ describe("buildWriteChecks", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await makeClient(makeLogger()).buildWriteChecks({
-      datasetId: "billing.public.payments",
+      datasetCode: "billing.public.payments",
       user: {},
       context: {},
     });
 
-    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const [, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
     expect(JSON.parse(init.body as string)).not.toHaveProperty("ids");
     expect(result.writeSql).toContain("{{ids}}");
   });
@@ -222,7 +245,7 @@ describe("buildWriteChecks", () => {
     );
 
     const result = await makeClient(makeLogger()).buildWriteChecks({
-      datasetId: "billing.public.payments",
+      datasetCode: "billing.public.payments",
       user: {},
       context: {},
     });
@@ -245,7 +268,7 @@ describe("buildWriteChecks", () => {
 
     const logger = makeLogger();
     const result = await makeClient(logger).buildWriteChecks({
-      datasetId: "billing.public.ghosts",
+      datasetCode: "billing.public.ghosts",
       user: {},
       context: {},
     });
@@ -266,7 +289,7 @@ describe("buildWriteChecks", () => {
 
     const logger = makeLogger();
     const result = await makeClient(logger).buildWriteChecks({
-      datasetId: "billing.public.payments",
+      datasetCode: "billing.public.payments",
       user: {},
       context: {},
       ids: ["1"],
@@ -280,13 +303,13 @@ describe("buildWriteChecks", () => {
     expect(logger.error).toHaveBeenCalled();
   });
 
-  it("throws on a malformed dataset id without calling the server", async () => {
+  it("throws on a malformed dataset code without calling the server", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
       makeClient(makeLogger()).buildWriteChecks({
-        datasetId: "db.billing.public.payments",
+        datasetCode: "db.billing.public.payments",
         user: {},
         context: {},
       }),

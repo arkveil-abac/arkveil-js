@@ -3,7 +3,7 @@ import { fetchWithRetry } from "./utils/fetch-with-retry";
 import {
   METADATA_MISSING,
   MODE_UNAVAILABLE,
-  normalizeDatasetId,
+  normalizeDatasetCode,
   type ReadConditionRequest,
   type ReadConditionResponse,
   type WriteChecksRequest,
@@ -93,12 +93,13 @@ export type ArkveilUser = ArkveilUserRegistry extends { attributes: infer U }
  * The shape of context attributes, resolved from {@link ArkveilContextRegistry}.
  * Falls back to `Record<string, any>` when the registry has not been augmented.
  */
-export type ArkveilContext =
-  ArkveilContextRegistry extends { attributes: infer C }
-    ? C extends Record<string, any>
-      ? C
-      : Record<string, any>
-    : Record<string, any>;
+export type ArkveilContext = ArkveilContextRegistry extends {
+  attributes: infer C;
+}
+  ? C extends Record<string, any>
+    ? C
+    : Record<string, any>
+  : Record<string, any>;
 
 export interface ArkveilParams<
   TUser extends Record<string, any> = ArkveilUser,
@@ -121,7 +122,7 @@ export interface PermissionCheckRequest<
   TUser extends Record<string, any> = ArkveilUser,
   TContext extends Record<string, any> = ArkveilContext,
 > {
-  code: TCode;
+  actionCode: TCode;
   user: TUser;
   context: TContext;
 }
@@ -174,7 +175,7 @@ export class Arkveil<
     req: any,
   ): Promise<PermissionCheckRequest<TCode, TUser, TContext>> {
     const request: PermissionCheckRequest<TCode, TUser, TContext> = {
-      code,
+      actionCode: code,
       user: {} as TUser,
       context: {} as TContext,
     };
@@ -248,26 +249,26 @@ export class Arkveil<
    *
    * Fail-closed: transport failures and non-OK responses are logged and
    * return `{ readCondition: "FALSE", mode: "UNAVAILABLE" }`, so a degraded
-   * Arkveil never widens access. A malformed `datasetId` throws instead —
+   * Arkveil never widens access. A malformed `datasetCode` throws instead —
    * that is a programming/configuration error, not a runtime condition.
    */
   public async buildReadCondition(
     request: ReadConditionRequest<TUser, TContext>,
   ): Promise<ReadConditionResponse> {
-    const datasetId = normalizeDatasetId(request.datasetId);
+    const datasetCode = normalizeDatasetCode(request.datasetCode);
 
     try {
       const data = await this.postConditions<ReadConditionResponse>("read", {
-        datasetId,
+        datasetCode,
         user: request.user,
         context: request.context,
         ...(request.alias !== undefined ? { alias: request.alias } : {}),
       });
-      this.flagDegradedMode("read condition", datasetId, data.mode);
+      this.flagDegradedMode("read condition", datasetCode, data.mode);
       return data;
     } catch (error) {
       this.logger?.error(
-        `[Arkveil] Read condition request failed for dataset ${datasetId}; failing closed (FALSE):`,
+        `[Arkveil] Read condition request failed for dataset ${datasetCode}; failing closed (FALSE):`,
         error,
       );
       return { readCondition: "FALSE", mode: MODE_UNAVAILABLE };
@@ -294,17 +295,17 @@ export class Arkveil<
    *
    * Fail-closed: transport failures and non-OK responses are logged and
    * return `{ writeSql: "SELECT FALSE", invariantSql: [], mode: "UNAVAILABLE" }`.
-   * A malformed `datasetId` throws instead — that is a
+   * A malformed `datasetCode` throws instead — that is a
    * programming/configuration error, not a runtime condition.
    */
   public async buildWriteChecks(
     request: WriteChecksRequest<TUser, TContext>,
   ): Promise<WriteChecksResponse> {
-    const datasetId = normalizeDatasetId(request.datasetId);
+    const datasetCode = normalizeDatasetCode(request.datasetCode);
 
     try {
       const data = await this.postConditions<WriteChecksResponse>("write", {
-        datasetId,
+        datasetCode,
         user: request.user,
         context: request.context,
         ...(request.ids !== undefined
@@ -313,15 +314,15 @@ export class Arkveil<
       });
       if (data.reason === METADATA_MISSING) {
         this.logger?.error(
-          `[Arkveil] Write check for dataset ${datasetId} denied with reason METADATA_MISSING: ` +
+          `[Arkveil] Write check for dataset ${datasetCode} denied with reason METADATA_MISSING: ` +
             "the dataset is not registered in Arkveil (configuration gap, not a policy deny).",
         );
       }
-      this.flagDegradedMode("write checks", datasetId, data.mode);
+      this.flagDegradedMode("write checks", datasetCode, data.mode);
       return data;
     } catch (error) {
       this.logger?.error(
-        `[Arkveil] Write checks request failed for dataset ${datasetId}; failing closed (SELECT FALSE):`,
+        `[Arkveil] Write checks request failed for dataset ${datasetCode}; failing closed (SELECT FALSE):`,
         error,
       );
       return {
@@ -377,12 +378,12 @@ export class Arkveil<
    * flagged in diagnostics. */
   private flagDegradedMode(
     operation: string,
-    datasetId: string,
+    datasetCode: string,
     mode: string,
   ): void {
     if (mode !== "NORMAL") {
       this.logger?.warn(
-        `[Arkveil] ${operation} for dataset ${datasetId} served in degraded mode "${mode}".`,
+        `[Arkveil] ${operation} for dataset ${datasetCode} served in degraded mode "${mode}".`,
       );
     }
   }

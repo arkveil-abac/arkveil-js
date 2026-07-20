@@ -24,7 +24,7 @@ export async function fetchWithRetry(
   url: string,
   options: RequestInit,
   { timeout = 5000, retryAttempts = 3 }: FetchWithRetryOptions = {},
-  attempt = 1
+  attempt = 1,
 ): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -40,7 +40,12 @@ export async function fetchWithRetry(
     // Network failures / timeouts (aborts) are retried.
     if (attempt < retryAttempts) {
       await delay(getBackoffDelay(attempt));
-      return fetchWithRetry(url, options, { timeout, retryAttempts }, attempt + 1);
+      return fetchWithRetry(
+        url,
+        options,
+        { timeout, retryAttempts },
+        attempt + 1,
+      );
     }
     throw error;
   }
@@ -50,7 +55,12 @@ export async function fetchWithRetry(
   // Retry transient server errors / rate limiting before giving up.
   if (isRetryableStatus(response.status) && attempt < retryAttempts) {
     await delay(getBackoffDelay(attempt));
-    return fetchWithRetry(url, options, { timeout, retryAttempts }, attempt + 1);
+    return fetchWithRetry(
+      url,
+      options,
+      { timeout, retryAttempts },
+      attempt + 1,
+    );
   }
 
   return response;

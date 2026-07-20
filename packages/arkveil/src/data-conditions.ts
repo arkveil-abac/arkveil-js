@@ -11,31 +11,33 @@
  */
 
 /**
- * A dataset id is exactly three dot-separated identifier segments, lowercase:
- * `datasource.schema.table`. There is no 2-segment shorthand and no 4-segment
- * (database) form — the schema segment is always explicit.
+ * A dataset code is exactly three dot-separated identifier segments,
+ * lowercase: `datasource.schema.table`. There is no 2-segment shorthand and
+ * no 4-segment (database) form — the schema segment is always explicit. (A
+ * bare-table-name shorthand exists in the policy-authoring DSL, but that is
+ * session-authed management surface — the SDK never accepts or emits it.)
  */
-const DATASET_ID_SEGMENT = /^[a-z_][a-z0-9_]*$/;
+const DATASET_CODE_SEGMENT = /^[a-z_][a-z0-9_]*$/;
 
 /**
- * Normalize a dataset id the way the server does before lookup — trim +
- * lowercase — so the SDK's own cache keys and logs agree with what the server
- * matches on, and validate its shape.
+ * Normalize a dataset code the way the server does before lookup — trim +
+ * lowercase — so the SDK's own cache keys and logs agree with what the
+ * server matches on, and validate its shape.
  *
- * @throws Error when the id is not three dot-separated identifier segments
+ * @throws Error when the code is not three dot-separated identifier segments
  *   (mirrors the server's 400). This signals a programming/configuration
  *   error, unlike transport failures, which the request methods absorb
  *   fail-closed.
  */
-export function normalizeDatasetId(datasetId: string): string {
-  const normalized = datasetId.trim().toLowerCase();
+export function normalizeDatasetCode(datasetCode: string): string {
+  const normalized = datasetCode.trim().toLowerCase();
   const segments = normalized.split(".");
   if (
     segments.length !== 3 ||
-    segments.some((segment) => !DATASET_ID_SEGMENT.test(segment))
+    segments.some((segment) => !DATASET_CODE_SEGMENT.test(segment))
   ) {
     throw new Error(
-      `datasetId must have exactly 3 segments (datasource.schema.table): ${datasetId}`,
+      `datasetCode must have exactly 3 segments (datasource.schema.table): ${datasetCode}`,
     );
   }
   return normalized;
@@ -76,7 +78,7 @@ export interface ReadConditionRequest<
   TContext extends Record<string, any> = Record<string, any>,
 > {
   /** `datasource.schema.table` — normalized (trim + lowercase) before sending. */
-  datasetId: string;
+  datasetCode: string;
   user: TUser;
   context: TContext;
   /**
@@ -106,7 +108,7 @@ export interface WriteChecksRequest<
   TContext extends Record<string, any> = Record<string, any>,
 > {
   /** `datasource.schema.table` — normalized (trim + lowercase) before sending. */
-  datasetId: string;
+  datasetCode: string;
   user: TUser;
   context: TContext;
   /**
