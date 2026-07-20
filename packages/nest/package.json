@@ -1,6 +1,6 @@
 {
   "name": "@arkveil/nest",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "NestJS SDK for Arkveil — declarative ABAC permission checks via decorators and guards.",
   "keywords": [
     "arkveil",
