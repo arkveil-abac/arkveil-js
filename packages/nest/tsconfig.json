@@ -8,6 +8,11 @@
     "jsx": "react-jsx",
     "allowJs": true,
 
+    // Legacy (experimental) decorator semantics, matching NestJS. Without this,
+    // esbuild lowers decorators as TC39 standard decorators, where parameter
+    // decorators like @Inject do not exist — and the guard loses its DI.
+    "experimentalDecorators": true,
+
     // Bundler mode
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
