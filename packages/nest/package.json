@@ -1,6 +1,6 @@
 {
   "name": "@arkveil/nest",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "NestJS SDK for Arkveil — declarative ABAC permission checks via decorators and guards.",
   "keywords": [
     "arkveil",
@@ -45,7 +45,8 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsup"
+    "build": "tsup",
+    "test": "pnpm run build && vitest run"
   },
   "dependencies": {
     "arkveil": "workspace:*"
@@ -65,9 +66,11 @@
     "@nestjs/common": "^11.1.8",
     "@nestjs/core": "^11.1.8",
     "@nestjs/graphql": "^13.2.0",
+    "@nestjs/testing": "^11.1.8",
     "@types/node": "^22",
     "reflect-metadata": "^0.2.2",
     "tsup": "^8.5.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.0"
   }
 }

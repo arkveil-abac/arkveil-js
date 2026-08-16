@@ -1,4 +1,5 @@
 import {
+  Inject,
   Injectable,
   type CanActivate,
   type ExecutionContext,
@@ -16,9 +17,12 @@ export const PERMISSION_POINT_KEY = "arkveil:permission-point";
 export class PermissionPointGuard implements CanActivate {
   private readonly logger = new Logger(PermissionPointGuard.name);
 
+  // The @Inject decorators are load-bearing: they record the dependencies as
+  // runtime metadata, which survives bundlers that never emit
+  // design:paramtypes (esbuild/tsup). Implicit constructor injection does not.
   constructor(
-    private readonly reflector: Reflector,
-    private readonly arkveil: Arkveil,
+    @Inject(Reflector) private readonly reflector: Reflector,
+    @Inject(Arkveil) private readonly arkveil: Arkveil,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
