@@ -284,7 +284,7 @@ export class Arkveil<
    * When it runs relative to the mutation statement is part of the contract:
    * - CREATE: **after** the insert (the new rows must exist to be evaluated),
    *   with the just-inserted ids.
-   * - UPDATE: **before and after** the update, with the targeted ids.
+   * - UPDATE: **before** the update, with the targeted ids.
    * - DELETE: **before** the delete, with the targeted ids.
    *
    * `ids` are sent as strings; the server casts them to the dataset's

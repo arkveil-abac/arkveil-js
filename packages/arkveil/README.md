@@ -184,12 +184,13 @@ the contract:
 | Mutation | Execute `writeSql`    | With ids…                     |
 | -------- | --------------------- | ----------------------------- |
 | CREATE   | **after** the insert  | the just-inserted rows' ids   |
-| UPDATE   | **before and after**  | the ids the statement targets |
+| UPDATE   | **before** the update | the ids the statement targets |
 | DELETE   | **before** the delete | the ids the statement targets |
 
-(Before-UPDATE proves the user may touch those rows at all; after-UPDATE
-proves the modified rows are still within their writable set. Rows that don't
-exist are not a violation — deleting an already-deleted id stays idempotent.)
+(The check gates the pre-image — the rows the mutation may touch. A row may
+legitimately leave the writable set as a result of the update, the way a draft
+becomes issued. Rows that don't exist are not a violation — deleting an
+already-deleted id stays idempotent.)
 
 When `ids` is omitted, `writeSql` comes back with a literal `{{ids}}`
 placeholder; fill it with the `substituteIds` helper, which renders the values
