@@ -1,13 +1,25 @@
 /**
  * Types and helpers for the data-protection (row-level security) endpoints:
- * `POST /api/{version}/abac/conditions/read` and `/write`.
+ * `POST /api/{version}/abac/conditions/read`, `/write`, and `/touch`.
  *
  * The SDK's data-related job is to obtain SQL enforcement artifacts from
  * Arkveil and hand them to the application to apply to its own queries. The
  * SDK never receives policies — only rendered SQL (PostgreSQL-flavored today).
- * Both endpoints share the base URL and `X-Api-Key` auth with
+ * All endpoints share the base URL and `X-Api-Key` auth with
  * `checkPermission`, and are served identically by the Arkveil kernel and a
  * customer-run `arkveil-runtime` sidecar — the base URL is opaque config.
+ *
+ * The data-policy model behind them is READ / TOUCH / RESULT:
+ *
+ * | Type   | Governs                                    | Judged                                  |
+ * | ------ | ------------------------------------------ | --------------------------------------- |
+ * | READ   | which rows a user sees                     | at read time                            |
+ * | TOUCH  | which existing rows a mutation may touch   | before the mutation, on current state   |
+ * | RESULT | the state a mutation may leave rows in     | after the mutation, same transaction    |
+ *
+ * TOUCH governs `UPDATE`/`DELETE`, RESULT governs `CREATE`/`UPDATE`. Each
+ * operation has its own union of grants; a mutation whose union has no
+ * applicable policy is denied whole.
  */
 
 /**
@@ -50,11 +62,41 @@ export function normalizeDatasetCode(datasetCode: string): string {
  */
 export type WriteCheckId = string | number | bigint;
 
+/** The mutation a write check is asked about. `READ` is not one of them. */
+export type WriteOperation = "CREATE" | "UPDATE" | "DELETE";
+
 /**
- * The literal placeholder present in `writeSql` when the request omitted
- * `ids` — substitute it with {@link substituteIds} before executing.
+ * The mutations that have a pre-state (TOUCH) phase, and therefore a touch
+ * condition to compose into a bulk statement's WHERE clause. `CREATE` has no
+ * WHERE clause and is rejected by the server (400).
+ */
+export type TouchOperation = Extract<WriteOperation, "UPDATE" | "DELETE">;
+
+const WRITE_OPERATIONS: readonly WriteOperation[] = [
+  "CREATE",
+  "UPDATE",
+  "DELETE",
+];
+const TOUCH_OPERATIONS: readonly TouchOperation[] = ["UPDATE", "DELETE"];
+
+/**
+ * The literal placeholder present in a CREATE `resultSql` — the only response
+ * that carries one, because the ids of the inserted rows exist only after the
+ * insert and so cannot be inlined server-side. Substitute it with
+ * {@link substituteIds} (or {@link resolveCreateResultSql}) before executing.
+ * `UPDATE`/`DELETE` checks are rendered over the ids sent in the request, so
+ * a placeholder in one of those is a contract violation.
  */
 export const IDS_PLACEHOLDER = "{{ids}}";
+
+/**
+ * The statement the SDK substitutes whenever it must deny: a single boolean
+ * `false`, shaped like any other check so callers execute one code path.
+ */
+export const DENY_SQL = "SELECT FALSE";
+
+/** The condition the SDK substitutes when a read/touch condition must deny. */
+export const DENY_CONDITION = "FALSE";
 
 /**
  * The `reason` value marking a fail-closed response for a well-formed dataset
@@ -66,12 +108,29 @@ export const IDS_PLACEHOLDER = "{{ids}}";
 export const METADATA_MISSING = "METADATA_MISSING";
 
 /**
+ * The client-synthesized `reason` marking a response that did not satisfy the
+ * contract for the operation asked about — a required field is missing, or an
+ * `{{ids}}` template turned up where the ids were supposed to be inlined.
+ * The SDK denies rather than proceeding unchecked, and logs it distinctly:
+ * like {@link METADATA_MISSING} it names a defect to fix, not a policy deny.
+ */
+export const CONTRACT_VIOLATION = "CONTRACT_VIOLATION";
+
+/**
  * The client-synthesized `mode` returned when a conditions request could not
  * be completed (network failure, timeout, non-OK response) and the SDK failed
  * closed. Never sent by the server. Like any non-`"NORMAL"` mode it should be
  * treated as degraded: honor the SQL, flag the call in diagnostics.
  */
 export const MODE_UNAVAILABLE = "UNAVAILABLE";
+
+/**
+ * The client-synthesized `mode` returned when a mutation targets no rows at
+ * all (an empty `ids` list). There is nothing to authorize, so the SDK skips
+ * the request entirely and returns no SQL — run no checks and no mutation.
+ * Never sent by the server.
+ */
+export const MODE_NO_OP = "NO_OP";
 
 export interface ReadConditionRequest<
   TUser extends Record<string, any> = Record<string, any>,
@@ -101,6 +160,43 @@ export interface ReadConditionResponse {
    * degraded: honor the SQL, flag the call in diagnostics.
    */
   mode: string;
+  /**
+   * Set on fail-closed responses; see {@link METADATA_MISSING} and
+   * {@link CONTRACT_VIOLATION}.
+   */
+  reason?: string;
+}
+
+export interface TouchConditionRequest<
+  TUser extends Record<string, any> = Record<string, any>,
+  TContext extends Record<string, any> = Record<string, any>,
+> {
+  /** `datasource.schema.table` — normalized (trim + lowercase) before sending. */
+  datasetCode: string;
+  user: TUser;
+  context: TContext;
+  /** See {@link ReadConditionRequest.alias}. */
+  alias?: string | null;
+  /**
+   * The bulk mutation being composed. `CREATE` has no WHERE clause to compose
+   * into and is rejected client-side (the server answers 400).
+   */
+  operation: TouchOperation;
+}
+
+export interface TouchConditionResponse {
+  /**
+   * A bare SQL boolean expression over the operation's TOUCH union, aliased
+   * like a read condition — AND it into the bulk statement's WHERE clause.
+   * Rows outside the subject's touch union are simply not touched; that
+   * narrowing is deliberate and visible in the query. `FALSE` is a normal
+   * response (empty union ⇒ zero rows affected), not an error.
+   */
+  touchCondition: string;
+  /** See {@link ReadConditionResponse.mode}. */
+  mode: string;
+  /** See {@link ReadConditionResponse.reason}. */
+  reason?: string;
 }
 
 export interface WriteChecksRequest<
@@ -111,53 +207,222 @@ export interface WriteChecksRequest<
   datasetCode: string;
   user: TUser;
   context: TContext;
+  /** The mutation the checks are about. Required; `READ` is not valid. */
+  operation: WriteOperation;
   /**
-   * Primary-key values of the rows the mutation touches (the just-inserted
-   * ids for the after-CREATE check; the targeted ids for UPDATE/DELETE).
-   * Values are sent as strings; the server casts them using the dataset's
-   * declared primary-key type and rejects values that don't fit it (400).
-   * When omitted, `writeSql` comes back with the `{{ids}}` placeholder to
-   * substitute via {@link substituteIds}.
+   * Primary-key values of the rows the mutation targets. **Required and
+   * non-empty for `UPDATE` and `DELETE`** — the checks answer about named
+   * rows, inlined server-side as typed literals — and **absent for `CREATE`**,
+   * whose ids do not exist until after the insert. Values are sent as
+   * strings; the server casts them using the dataset's declared primary-key
+   * type and rejects values that don't fit it (400).
+   *
+   * An empty list is a no-op, not a request: nothing is targeted, so there is
+   * nothing to authorize (see {@link MODE_NO_OP}).
    */
   ids?: readonly WriteCheckId[];
 }
 
 export interface WriteChecksResponse {
   /**
-   * A single statement returning one boolean: `true` ⇒ the mutation touches
-   * no forbidden row. Execute it against the application's database inside
-   * the mutation's transaction and roll back on `false`. When it runs is part
-   * of the contract: after the insert for CREATE, before AND after for
-   * UPDATE, before for DELETE. Rows that don't exist are not a violation —
-   * the check evaluates only rows it finds.
+   * The **pre-state** check: a single statement returning one boolean —
+   * `true` ⇒ every targeted row is inside the subject's TOUCH union. Present
+   * for `UPDATE` and `DELETE`, absent for `CREATE`. Run it **before** the
+   * mutation statement, inside its transaction, and roll back on `false`.
+   *
+   * Never run it after the fact — for a bulk update composed with
+   * {@link TouchConditionResponse.touchCondition}, the pre-state it checks no
+   * longer exists and it would deny legitimate updates.
    */
-  writeSql: string;
+  touchSql?: string;
   /**
-   * Always `[]` today (INVARIANT policies are authorable but not evaluated).
-   * When evaluation lands, each entry will be a statement that must hold
-   * after the mutation.
+   * The **post-state** check: a single statement returning one boolean —
+   * `true` ⇒ the state the mutation left the rows in is inside the subject's
+   * RESULT union. Present for `CREATE` and `UPDATE`, absent for `DELETE`. Run
+   * it **after** the mutation statement, in the same transaction, and roll
+   * back on `false`. On `CREATE` it carries the {@link IDS_PLACEHOLDER}
+   * template — fill it with the inserted rows' ids via
+   * {@link resolveCreateResultSql}.
    */
-  invariantSql: string[];
+  resultSql?: string;
   /** See {@link ReadConditionResponse.mode}. */
   mode: string;
-  /**
-   * Set on fail-closed responses; `"METADATA_MISSING"` (see
-   * {@link METADATA_MISSING}) means the dataset isn't registered in Arkveil.
-   */
+  /** See {@link ReadConditionResponse.reason}. */
   reason?: string;
 }
 
 /**
- * Substitute the `{{ids}}` placeholder in a `writeSql` template with the
- * given primary-key values, rendered as properly escaped SQL string literals
+ * Validate that the request the caller is about to make is well-formed, and
+ * render `ids` for the wire.
+ *
+ * @throws Error on the shapes the server answers 400 to — an unknown or
+ *   missing `operation`, `ids` sent with `CREATE`, `ids` missing for
+ *   `UPDATE`/`DELETE`. These are programming errors, not runtime conditions,
+ *   so they surface loudly instead of being absorbed fail-closed. (No write
+ *   proceeds either way: the caller never receives a check to pass.)
+ */
+export function prepareWriteChecksIds(
+  operation: WriteOperation,
+  ids: readonly WriteCheckId[] | undefined,
+): string[] | undefined {
+  if (!WRITE_OPERATIONS.includes(operation)) {
+    throw new Error(
+      `operation must be one of ${WRITE_OPERATIONS.join(", ")}: ${String(operation)}`,
+    );
+  }
+  if (operation === "CREATE") {
+    if (ids !== undefined) {
+      throw new Error(
+        "ids must not be sent with CREATE — the inserted rows' ids exist only after the insert; " +
+          "substitute them into resultSql with resolveCreateResultSql instead.",
+      );
+    }
+    return undefined;
+  }
+  if (ids === undefined) {
+    throw new Error(
+      `ids are required for ${operation} — the checks are rendered over the named rows.`,
+    );
+  }
+  return ids.map((id) => String(id));
+}
+
+/** @throws Error when `operation` is not one a touch condition exists for. */
+export function assertTouchOperation(
+  operation: TouchOperation,
+): TouchOperation {
+  if (!TOUCH_OPERATIONS.includes(operation)) {
+    throw new Error(
+      `operation must be one of ${TOUCH_OPERATIONS.join(", ")}: ${String(operation)}`,
+    );
+  }
+  return operation;
+}
+
+/** The deny-everything response for an operation, shaped with the fields that
+ * operation has. */
+export function denyWriteChecks(
+  operation: WriteOperation,
+  mode: string,
+  reason?: string,
+): WriteChecksResponse {
+  return {
+    ...(operation !== "CREATE" ? { touchSql: DENY_SQL } : {}),
+    ...(operation !== "DELETE" ? { resultSql: DENY_SQL } : {}),
+    mode,
+    ...(reason !== undefined ? { reason } : {}),
+  };
+}
+
+/**
+ * Hold the response to the contract for the operation asked about. A field
+ * the operation requires that is missing is a **contract violation — deny**,
+ * never proceed unchecked; absent fields mean "this operation has no such
+ * phase" only where the timing table says so. An `{{ids}}` template is
+ * expected on `CREATE`'s `resultSql` and nowhere else.
+ *
+ * @returns the response to hand back, and the violation to log (if any).
+ */
+export function applyWriteChecksContract(
+  operation: WriteOperation,
+  response: WriteChecksResponse,
+): { response: WriteChecksResponse; violation?: string } {
+  const expectsTouch = operation !== "CREATE";
+  const expectsResult = operation !== "DELETE";
+  const missing: string[] = [];
+  if (expectsTouch && typeof response.touchSql !== "string") {
+    missing.push("touchSql");
+  }
+  if (expectsResult && typeof response.resultSql !== "string") {
+    missing.push("resultSql");
+  }
+  if (missing.length > 0) {
+    return {
+      response: denyWriteChecks(
+        operation,
+        response.mode ?? MODE_UNAVAILABLE,
+        CONTRACT_VIOLATION,
+      ),
+      violation: `${operation} response is missing ${missing.join(" and ")}`,
+    };
+  }
+
+  // A dataset that isn't registered denies with SELECT FALSE in every field
+  // the operation has — a documented deny, not a malformed template.
+  if (response.reason !== METADATA_MISSING) {
+    const templated: string[] = [];
+    if (expectsTouch && response.touchSql!.includes(IDS_PLACEHOLDER)) {
+      templated.push("touchSql");
+    }
+    if (
+      operation !== "CREATE" &&
+      expectsResult &&
+      response.resultSql!.includes(IDS_PLACEHOLDER)
+    ) {
+      templated.push("resultSql");
+    }
+    if (templated.length > 0) {
+      return {
+        response: denyWriteChecks(
+          operation,
+          response.mode ?? MODE_UNAVAILABLE,
+          CONTRACT_VIOLATION,
+        ),
+        violation:
+          `${operation} response carries an ${IDS_PLACEHOLDER} template in ` +
+          `${templated.join(" and ")}; ids are inlined server-side for this operation`,
+      };
+    }
+    if (
+      operation === "CREATE" &&
+      !response.resultSql!.includes(IDS_PLACEHOLDER)
+    ) {
+      return {
+        response: denyWriteChecks(
+          operation,
+          response.mode ?? MODE_UNAVAILABLE,
+          CONTRACT_VIOLATION,
+        ),
+        violation: `CREATE resultSql carries no ${IDS_PLACEHOLDER} template to fill with the inserted rows' ids`,
+      };
+    }
+  }
+
+  // Unexpected phases are dropped rather than handed to the caller: running a
+  // check the operation has no phase for is exactly the v1 conflation this
+  // contract removed. Everything else passes through (additive contract).
+  const unexpected: string[] = [];
+  if (!expectsTouch && response.touchSql !== undefined)
+    unexpected.push("touchSql");
+  if (!expectsResult && response.resultSql !== undefined) {
+    unexpected.push("resultSql");
+  }
+  if (unexpected.length === 0) return { response };
+
+  const trimmed = { ...response };
+  if (!expectsTouch) delete trimmed.touchSql;
+  if (!expectsResult) delete trimmed.resultSql;
+  return {
+    response: trimmed,
+    violation: `${operation} response carries ${unexpected.join(" and ")}, which this operation has no phase for; ignoring it`,
+  };
+}
+
+/**
+ * Substitute the `{{ids}}` placeholder in a SQL template with the given
+ * primary-key values, rendered as properly escaped SQL string literals
  * (PostgreSQL coerces them to the column's type).
+ *
+ * Only a `CREATE` `resultSql` carries the template — see
+ * {@link resolveCreateResultSql}, which applies this helper and handles the
+ * deny cases. `UPDATE`/`DELETE` checks arrive with their ids already inlined.
  *
  * @throws Error when `ids` is empty (an `IN ()` list is not valid SQL — with
  *   no rows touched there is nothing to check) or when the SQL contains no
- *   placeholder (the ids were already inlined server-side).
+ *   placeholder.
  */
 export function substituteIds(
-  writeSql: string,
+  sql: string,
   ids: readonly WriteCheckId[],
 ): string {
   if (ids.length === 0) {
@@ -165,13 +430,44 @@ export function substituteIds(
       "substituteIds requires at least one id — with no rows touched there is nothing to check.",
     );
   }
-  if (!writeSql.includes(IDS_PLACEHOLDER)) {
+  if (!sql.includes(IDS_PLACEHOLDER)) {
     throw new Error(
-      `writeSql contains no ${IDS_PLACEHOLDER} placeholder — it is only present when the request omitted ids.`,
+      `sql contains no ${IDS_PLACEHOLDER} placeholder — it is only present on a CREATE resultSql.`,
     );
   }
   const literals = ids
     .map((id) => `'${String(id).replaceAll("'", "''")}'`)
     .join(", ");
-  return writeSql.replaceAll(IDS_PLACEHOLDER, literals);
+  return sql.replaceAll(IDS_PLACEHOLDER, literals);
+}
+
+/**
+ * Complete the CREATE path: take the ids of the rows the insert produced and
+ * render the executable post-state check from the response's `resultSql`
+ * template. Run the result in the insert's transaction and roll back on
+ * `false`.
+ *
+ * Denies (returns {@link DENY_SQL}) whenever the response cannot be completed
+ * — no `resultSql` at all, or one with no template (an unregistered dataset,
+ * a fail-closed response, or a contract violation, each already logged by
+ * `buildWriteChecks`). Fail-closed: never return SQL that would pass.
+ *
+ * @throws Error when `insertedIds` is empty — an insert that produced no rows
+ *   has nothing to authorize; skip the check instead of calling this.
+ */
+export function resolveCreateResultSql(
+  response: Pick<WriteChecksResponse, "resultSql">,
+  insertedIds: readonly WriteCheckId[],
+): string {
+  if (insertedIds.length === 0) {
+    throw new Error(
+      "resolveCreateResultSql requires the ids of at least one inserted row — " +
+        "an insert that produced no rows has nothing to authorize.",
+    );
+  }
+  const { resultSql } = response;
+  if (typeof resultSql !== "string" || !resultSql.includes(IDS_PLACEHOLDER)) {
+    return DENY_SQL;
+  }
+  return substituteIds(resultSql, insertedIds);
 }

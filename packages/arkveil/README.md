@@ -130,14 +130,27 @@ backoff; if the check ultimately fails it resolves to `{ granted: false }`
 Arkveil can also protect **data** (datasets = database tables). The SDK's job
 is to obtain SQL enforcement artifacts from Arkveil and apply them to your
 application's own queries — it never receives policies, only rendered SQL
-(PostgreSQL-flavored today). Both endpoints share the base URL and API-key
-auth with `checkPermission`, and are served identically by the Arkveil kernel
-and a self-hosted `arkveil-runtime` sidecar — point `serviceUrl` at either.
+(PostgreSQL-flavored today). All three endpoints share the base URL and
+API-key auth with `checkPermission`, and are served identically by the Arkveil
+kernel and a self-hosted `arkveil-runtime` sidecar — point `serviceUrl` at
+either.
 
 A **dataset code** is exactly three dot-separated lowercase segments:
 `datasource.schema.table`. The SDK normalizes (trim + lowercase) before
 sending and throws on any other shape — there is no 2-segment shorthand and no
 4-segment form.
+
+Data policies come in three types, and each produces a different artifact:
+
+| Type     | Governs                                  | Judged                                | SDK method                                 |
+| -------- | ---------------------------------------- | ------------------------------------- | ------------------------------------------ |
+| `READ`   | which rows a user sees                   | at read time                          | `buildReadCondition`                       |
+| `TOUCH`  | which existing rows a mutation may touch | before the mutation, on current state | `buildWriteChecks` / `buildTouchCondition` |
+| `RESULT` | the state a mutation may leave rows in   | after the mutation, same transaction  | `buildWriteChecks`                         |
+
+`TOUCH` governs `UPDATE`/`DELETE`, `RESULT` governs `CREATE`/`UPDATE`. Each
+operation has its own union of grants; a mutation whose union has no
+applicable policy is denied whole.
 
 ### `buildReadCondition(request)` — filtering reads
 
@@ -161,61 +174,157 @@ are qualified `"schema"."table"."column"`. **`FALSE` is a normal response**
 ("no applicable policy ⇒ no rows") — apply it like any other condition; never
 fall back to unfiltered access.
 
-### `buildWriteChecks(request)` — validating mutations
+### `buildWriteChecks(request)` — mutations over named rows
+
+When you know the primary keys the mutation targets, ask about those rows:
 
 ```typescript
-const { writeSql } = await arkveil.buildWriteChecks({
+const { touchSql, resultSql } = await arkveil.buildWriteChecks({
   datasetCode: "billing.public.payments",
   user: { id: "user-123", role: "manager" },
   context: {},
-  ids: [42, 7], // primary keys the mutation touches (sent as strings)
+  operation: "UPDATE", // "CREATE" | "UPDATE" | "DELETE"
+  ids: [42, 7], // required non-empty for UPDATE/DELETE; absent for CREATE
 });
 
 // Inside the mutation's transaction:
-const [{ allowed }] = await tx.query(`${writeSql} AS allowed`);
+const [{ allowed: mayTouch }] = await tx.query(`${touchSql} AS allowed`);
+if (!mayTouch) throw rollback();
+
+await tx.query(`UPDATE payments SET amount = $1 WHERE id = ANY($2)`, [10, ids]);
+
+const [{ allowed: mayResult }] = await tx.query(`${resultSql} AS allowed`);
+if (!mayResult) throw rollback();
+```
+
+Each check is a single statement returning one boolean. Which check exists,
+and when it runs, is the contract:
+
+| Mutation | `touchSql` (pre-state)            | `resultSql` (post-state)                    |
+| -------- | --------------------------------- | ------------------------------------------- |
+| CREATE   | absent                            | **after** the insert, over the inserted ids |
+| UPDATE   | **before** the update, over `ids` | **after** the update, over the same ids     |
+| DELETE   | **before** the delete, over `ids` | absent                                      |
+
+Both run against **your** database, inside the mutation's transaction; `false`
+from either denies and rolls back the whole mutation. No partial success, no
+silent narrowing on named rows.
+
+`ids` are sent as strings and inlined server-side as typed literals — so
+`UPDATE`/`DELETE` checks arrive ready to execute. An **empty** `ids` list
+targets nothing: the SDK skips the request and returns `{ mode: "NO_OP" }` —
+run no checks and no mutation.
+
+#### The CREATE path
+
+A `CREATE` sends no `ids` (they exist only after the insert), so its
+`resultSql` comes back with an `{{ids}}` template. Insert first, then fill the
+template with the ids the insert produced:
+
+```typescript
+import { resolveCreateResultSql } from "arkveil";
+
+const checks = await arkveil.buildWriteChecks({
+  datasetCode: "billing.public.payments",
+  user,
+  context: {},
+  operation: "CREATE",
+});
+
+const inserted = await tx.query(
+  `INSERT INTO payments (amount) VALUES ($1) RETURNING id`,
+  [amount],
+);
+const sql = resolveCreateResultSql(
+  checks,
+  inserted.rows.map((r) => r.id),
+);
+const [{ allowed }] = await tx.query(`${sql} AS allowed`);
 if (!allowed) throw rollback();
 ```
 
-`writeSql` is a single statement returning one boolean: `true` ⇒ the mutation
-touches no forbidden row. Execute it against **your** database, inside the
-mutation's transaction, and roll back on `false`. _When_ it runs is part of
-the contract:
+`resolveCreateResultSql` returns `SELECT FALSE` whenever the response cannot
+be completed (no `resultSql`, or one with no template), so a degraded response
+can never produce a check that passes. `substituteIds` is the lower-level
+helper it uses; the `{{ids}}` template exists on this path only.
 
-| Mutation | Execute `writeSql`    | With ids…                     |
-| -------- | --------------------- | ----------------------------- |
-| CREATE   | **after** the insert  | the just-inserted rows' ids   |
-| UPDATE   | **before** the update | the ids the statement targets |
-| DELETE   | **before** the delete | the ids the statement targets |
+### `buildTouchCondition(request)` — bulk mutations by predicate
 
-(The check gates the pre-image — the rows the mutation may touch. A row may
-legitimately leave the writable set as a result of the update, the way a draft
-becomes issued. Rows that don't exist are not a violation — deleting an
-already-deleted id stays idempotent.)
-
-When `ids` is omitted, `writeSql` comes back with a literal `{{ids}}`
-placeholder; fill it with the `substituteIds` helper, which renders the values
-as escaped SQL literals:
+When the rows are named by a predicate rather than by id, compose the touch
+condition into the statement's `WHERE` clause instead:
 
 ```typescript
-import { substituteIds } from "arkveil";
-
-const sql = substituteIds(writeSql, insertedIds);
+const { touchCondition } = await arkveil.buildTouchCondition({
+  datasetCode: "billing.public.payments",
+  user,
+  context: {},
+  alias: "p",
+  operation: "UPDATE", // "UPDATE" | "DELETE" — CREATE has no WHERE clause
+});
 ```
+
+Two recipes, each inside one transaction:
+
+**DELETE** — complete as-is; a delete has no result phase:
+
+```sql
+DELETE FROM payments p WHERE p.status = 'draft' AND (<touchCondition>)
+```
+
+**UPDATE** — compose, return the ids you touched, then run **only** the
+post-state check for them:
+
+```typescript
+const updated = await tx.query(
+  `UPDATE payments p SET amount = $1
+     WHERE p.status = 'draft' AND (${touchCondition})
+     RETURNING p.id`,
+  [amount],
+);
+const { resultSql } = await arkveil.buildWriteChecks({
+  datasetCode: "billing.public.payments",
+  user,
+  context: {},
+  operation: "UPDATE",
+  ids: updated.rows.map((r) => r.id),
+});
+const [{ allowed }] = await tx.query(`${resultSql} AS allowed`);
+if (!allowed) throw rollback();
+```
+
+Never run `touchSql` post-hoc here: the pre-state it judges no longer exists,
+so it would deny legitimate updates. Rows outside the subject's touch union
+are simply not touched — that narrowing is deliberate and visible in the
+query, the same trust tier as read filtration. An empty touch union renders
+`FALSE`, so the statement affects zero rows; that is the intended fail-closed
+composition, not an error. When the ids are known upfront, prefer
+`buildWriteChecks` — deny-whole over the enumerated rows is the stricter
+promise.
 
 ### Fail-closed behavior
 
-- A well-formed dataset code that isn't registered in Arkveil returns
-  `writeSql: "SELECT FALSE"` with `reason: "METADATA_MISSING"` — a
-  **configuration gap**, not a policy deny. The SDK logs it distinctly;
-  compare against the exported `METADATA_MISSING` constant to surface it.
+- A well-formed dataset code that isn't registered in Arkveil comes back with
+  `SELECT FALSE` in every field the operation has and
+  `reason: "METADATA_MISSING"` — a **configuration gap**, not a policy deny.
+  The SDK logs it distinctly; compare against the exported `METADATA_MISSING`
+  constant to surface it.
+- A response missing a field its operation requires (an `UPDATE` with no
+  `touchSql`, say), or carrying an `{{ids}}` template where the ids should
+  have been inlined, is a **contract violation**: the SDK denies rather than
+  proceeding unchecked and reports `reason: "CONTRACT_VIOLATION"`. Absent
+  fields mean "this operation has no such phase" only where the timing table
+  above says so.
 - Transport failures and non-OK responses never widen access: after retries,
-  `buildReadCondition` resolves to `{ readCondition: "FALSE", mode: "UNAVAILABLE" }`
-  and `buildWriteChecks` to `{ writeSql: "SELECT FALSE", invariantSql: [], mode: "UNAVAILABLE" }`.
+  `buildReadCondition` and `buildTouchCondition` resolve to `"FALSE"` and
+  `buildWriteChecks` to `SELECT FALSE` in every field the operation has, all
+  with `mode: "UNAVAILABLE"`.
+- A malformed `datasetCode`, an unknown `operation`, or `ids` that contradict
+  the operation (sent with `CREATE`, missing for `UPDATE`/`DELETE`) **throw** —
+  those are programming errors, and the server answers them `400`. No write
+  proceeds either way: the caller never receives a check to pass.
 - `mode` is `"NORMAL"` unless the serving side is degraded (e.g. a sidecar
   past its staleness bound). Any other value is logged as a warning — honor
   the SQL, watch the diagnostics.
-- `invariantSql` is always `[]` today; it is wired through for when INVARIANT
-  policy evaluation lands.
 
 Field-level masking (PROJECTION policies) has no HTTP contract yet and is not
 part of this SDK.

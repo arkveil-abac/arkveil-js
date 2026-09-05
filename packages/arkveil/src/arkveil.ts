@@ -1,11 +1,21 @@
 import type { Logger } from "./types/logger";
 import { fetchWithRetry } from "./utils/fetch-with-retry";
 import {
+  applyWriteChecksContract,
+  assertTouchOperation,
+  CONTRACT_VIOLATION,
+  DENY_CONDITION,
+  DENY_SQL,
+  denyWriteChecks,
   METADATA_MISSING,
+  MODE_NO_OP,
   MODE_UNAVAILABLE,
   normalizeDatasetCode,
+  prepareWriteChecksIds,
   type ReadConditionRequest,
   type ReadConditionResponse,
+  type TouchConditionRequest,
+  type TouchConditionResponse,
   type WriteChecksRequest,
   type WriteChecksResponse,
 } from "./data-conditions";
@@ -264,72 +274,166 @@ export class Arkveil<
         context: request.context,
         ...(request.alias !== undefined ? { alias: request.alias } : {}),
       });
+      if (typeof data.readCondition !== "string") {
+        this.logger?.error(
+          `[Arkveil] Read condition for dataset ${datasetCode} violates the contract: ` +
+            "the response is missing readCondition. Denying rather than proceeding unchecked.",
+        );
+        return {
+          readCondition: DENY_CONDITION,
+          mode: data.mode ?? MODE_UNAVAILABLE,
+          reason: CONTRACT_VIOLATION,
+        };
+      }
+      this.reportConfigurationGap("Read condition", datasetCode, data.reason);
       this.flagDegradedMode("read condition", datasetCode, data.mode);
       return data;
     } catch (error) {
       this.logger?.error(
-        `[Arkveil] Read condition request failed for dataset ${datasetCode}; failing closed (FALSE):`,
+        `[Arkveil] Read condition request failed for dataset ${datasetCode}; failing closed (${DENY_CONDITION}):`,
         error,
       );
-      return { readCondition: "FALSE", mode: MODE_UNAVAILABLE };
+      return { readCondition: DENY_CONDITION, mode: MODE_UNAVAILABLE };
     }
   }
 
   /**
-   * Fetch the SQL write check for a mutation (`POST /abac/conditions/write`):
-   * a single statement returning one boolean — `true` ⇒ the mutation touches
-   * no forbidden row. Execute it against the application's database inside
-   * the mutation's transaction and roll back on `false`.
+   * Fetch the SQL checks for a mutation over **named rows**
+   * (`POST /abac/conditions/write`). Each check is a single statement
+   * returning one boolean; run it against the application's database inside
+   * the mutation's transaction and roll back the whole mutation on `false`.
+   * There is no partial success and no silent narrowing on named rows.
    *
-   * When it runs relative to the mutation statement is part of the contract:
-   * - CREATE: **after** the insert (the new rows must exist to be evaluated),
-   *   with the just-inserted ids.
-   * - UPDATE: **before** the update, with the targeted ids.
-   * - DELETE: **before** the delete, with the targeted ids.
+   * Which check exists, and when it runs, is the contract:
    *
-   * `ids` are sent as strings; the server casts them to the dataset's
-   * primary-key type. With `ids` omitted, `writeSql` contains the `{{ids}}`
-   * placeholder to fill via `substituteIds`. A `reason` of
-   * `"METADATA_MISSING"` means the dataset isn't registered in Arkveil — a
-   * configuration gap, not a policy deny.
+   * | Mutation | `touchSql`                        | `resultSql`                                 |
+   * | -------- | --------------------------------- | ------------------------------------------- |
+   * | CREATE   | absent                            | **after** the insert, over the inserted ids |
+   * | UPDATE   | **before** the update, over `ids` | **after** the update, over the same ids     |
+   * | DELETE   | **before** the delete, over `ids` | absent                                      |
+   *
+   * `ids` are required and non-empty for `UPDATE`/`DELETE` (sent as strings;
+   * the server inlines them as typed literals) and must be absent for
+   * `CREATE` — its `resultSql` comes back with the `{{ids}}` template, which
+   * `resolveCreateResultSql` fills with the ids the insert produced. An empty
+   * `ids` list targets nothing, so the SDK skips the request entirely and
+   * returns `{ mode: "NO_OP" }` — run no checks and no mutation.
+   *
+   * A response missing a field its operation requires is a contract
+   * violation: the SDK denies rather than proceeding unchecked, and reports
+   * `reason: "CONTRACT_VIOLATION"`. A `reason` of `"METADATA_MISSING"` means
+   * the dataset isn't registered in Arkveil. Both are configuration gaps,
+   * logged distinctly from a policy deny.
    *
    * Fail-closed: transport failures and non-OK responses are logged and
-   * return `{ writeSql: "SELECT FALSE", invariantSql: [], mode: "UNAVAILABLE" }`.
-   * A malformed `datasetCode` throws instead — that is a
-   * programming/configuration error, not a runtime condition.
+   * return `SELECT FALSE` in every field the operation has, with
+   * `mode: "UNAVAILABLE"`. A malformed `datasetCode`, an unknown
+   * `operation`, or `ids` that contradict the operation throw instead — those
+   * are programming/configuration errors, not runtime conditions.
    */
   public async buildWriteChecks(
     request: WriteChecksRequest<TUser, TContext>,
   ): Promise<WriteChecksResponse> {
     const datasetCode = normalizeDatasetCode(request.datasetCode);
+    const operation = request.operation;
+    const ids = prepareWriteChecksIds(operation, request.ids);
+
+    // Nothing targeted ⇒ nothing to authorize: no request, no checks.
+    if (ids !== undefined && ids.length === 0) {
+      this.logger?.info(
+        `[Arkveil] ${operation} on dataset ${datasetCode} targets no rows; skipping the write checks.`,
+      );
+      return { mode: MODE_NO_OP };
+    }
 
     try {
       const data = await this.postConditions<WriteChecksResponse>("write", {
         datasetCode,
         user: request.user,
         context: request.context,
-        ...(request.ids !== undefined
-          ? { ids: request.ids.map((id) => String(id)) }
-          : {}),
+        operation,
+        ...(ids !== undefined ? { ids } : {}),
       });
-      if (data.reason === METADATA_MISSING) {
+
+      const { response, violation } = applyWriteChecksContract(operation, data);
+      if (violation) {
         this.logger?.error(
-          `[Arkveil] Write check for dataset ${datasetCode} denied with reason METADATA_MISSING: ` +
-            "the dataset is not registered in Arkveil (configuration gap, not a policy deny).",
+          `[Arkveil] Write checks for dataset ${datasetCode} violate the contract: ${violation}. ` +
+            "Denying rather than proceeding unchecked.",
         );
       }
-      this.flagDegradedMode("write checks", datasetCode, data.mode);
+      this.reportConfigurationGap("Write checks", datasetCode, response.reason);
+      this.flagDegradedMode("write checks", datasetCode, response.mode);
+      return response;
+    } catch (error) {
+      this.logger?.error(
+        `[Arkveil] Write checks request failed for dataset ${datasetCode}; failing closed (${DENY_SQL}):`,
+        error,
+      );
+      return denyWriteChecks(operation, MODE_UNAVAILABLE);
+    }
+  }
+
+  /**
+   * Fetch the SQL touch condition for a **bulk** mutation whose rows are
+   * named by a predicate rather than by id (`POST /abac/conditions/touch`):
+   * a bare boolean expression over the operation's TOUCH union, aliased like
+   * a read condition. AND it into the statement's WHERE clause — rows outside
+   * the subject's touch union are simply not touched.
+   *
+   * The two recipes, each in one transaction:
+   * - `DELETE … WHERE <predicate> AND (<touchCondition>)` — complete; a
+   *   delete has no result phase.
+   * - `UPDATE … WHERE <predicate> AND (<touchCondition>) RETURNING <pk>`,
+   *   then `buildWriteChecks({ operation: "UPDATE", ids: <returned ids> })`
+   *   and execute **only** `resultSql`. Never run `touchSql` post-hoc: the
+   *   pre-state it checks no longer exists, so it would deny legitimate
+   *   updates. Deny ⇒ roll back.
+   *
+   * `touchCondition: "FALSE"` is a normal response (an empty touch union ⇒
+   * the statement affects zero rows), not an error. When the ids are known
+   * upfront, prefer `buildWriteChecks` — deny-whole over the enumerated rows
+   * is the stricter promise.
+   *
+   * Fail-closed: transport failures and non-OK responses are logged and
+   * return `{ touchCondition: "FALSE", mode: "UNAVAILABLE" }`. A malformed
+   * `datasetCode` or an operation with no WHERE clause (`CREATE`) throws.
+   */
+  public async buildTouchCondition(
+    request: TouchConditionRequest<TUser, TContext>,
+  ): Promise<TouchConditionResponse> {
+    const datasetCode = normalizeDatasetCode(request.datasetCode);
+    const operation = assertTouchOperation(request.operation);
+
+    try {
+      const data = await this.postConditions<TouchConditionResponse>("touch", {
+        datasetCode,
+        user: request.user,
+        context: request.context,
+        operation,
+        ...(request.alias !== undefined ? { alias: request.alias } : {}),
+      });
+
+      if (typeof data.touchCondition !== "string") {
+        this.logger?.error(
+          `[Arkveil] Touch condition for dataset ${datasetCode} violates the contract: ` +
+            "the response is missing touchCondition. Denying rather than proceeding unchecked.",
+        );
+        return {
+          touchCondition: DENY_CONDITION,
+          mode: data.mode ?? MODE_UNAVAILABLE,
+          reason: CONTRACT_VIOLATION,
+        };
+      }
+      this.reportConfigurationGap("Touch condition", datasetCode, data.reason);
+      this.flagDegradedMode("touch condition", datasetCode, data.mode);
       return data;
     } catch (error) {
       this.logger?.error(
-        `[Arkveil] Write checks request failed for dataset ${datasetCode}; failing closed (SELECT FALSE):`,
+        `[Arkveil] Touch condition request failed for dataset ${datasetCode}; failing closed (${DENY_CONDITION}):`,
         error,
       );
-      return {
-        writeSql: "SELECT FALSE",
-        invariantSql: [],
-        mode: MODE_UNAVAILABLE,
-      };
+      return { touchCondition: DENY_CONDITION, mode: MODE_UNAVAILABLE };
     }
   }
 
@@ -339,7 +443,7 @@ export class Arkveil<
    * the callers can apply their fail-closed defaults.
    */
   private async postConditions<T>(
-    endpoint: "read" | "write",
+    endpoint: "read" | "write" | "touch",
     body: Record<string, unknown>,
   ): Promise<T> {
     const url = `${this.serviceUrl}/api/${this.version}/abac/conditions/${endpoint}`;
@@ -371,6 +475,25 @@ export class Arkveil<
 
     // Responses gain fields additively; anything unknown is passed through.
     return (await response.json()) as T;
+  }
+
+  /**
+   * `METADATA_MISSING` names a configuration gap — the dataset is not
+   * registered in Arkveil — and `CONTRACT_VIOLATION` a response the SDK could
+   * not honor. Both deny, and both are logged distinctly from an ordinary
+   * policy deny so operators see something to fix rather than a rule at work.
+   */
+  private reportConfigurationGap(
+    operation: string,
+    datasetCode: string,
+    reason: string | undefined,
+  ): void {
+    if (reason === METADATA_MISSING) {
+      this.logger?.error(
+        `[Arkveil] ${operation} for dataset ${datasetCode} denied with reason ${METADATA_MISSING}: ` +
+          "the dataset is not registered in Arkveil (configuration gap, not a policy deny).",
+      );
+    }
   }
 
   /** Non-"NORMAL" modes mean the serving side is degraded (e.g. a sidecar

@@ -111,12 +111,14 @@ Creates a middleware that checks permissions before allowing access to the route
 ## Row-level data protection
 
 The client inherits the core SDK's data-protection methods —
-`buildReadCondition` (a SQL condition to AND into your SELECTs) and
-`buildWriteChecks` (a boolean statement to run inside a mutation's
-transaction) — plus the `substituteIds` helper. See the
-[`arkveil` core README](https://www.npmjs.com/package/arkveil) for the full
-contract, including when the write check must run relative to
-CREATE/UPDATE/DELETE and the fail-closed semantics.
+`buildReadCondition` (a SQL condition to AND into your SELECTs),
+`buildWriteChecks` (the pre-state `touchSql` / post-state `resultSql` checks
+to run inside a mutation's transaction, over the ids it targets), and
+`buildTouchCondition` (a condition to compose into a bulk `UPDATE`/`DELETE`'s
+WHERE clause) — plus the `resolveCreateResultSql` / `substituteIds` helpers.
+See the [`arkveil` core README](https://www.npmjs.com/package/arkveil) for the
+full contract: which check exists for CREATE/UPDATE/DELETE and when it runs,
+the two bulk recipes, and the fail-closed semantics.
 
 ## License
 

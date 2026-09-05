@@ -13,14 +13,23 @@ export type {
 export {
   normalizeDatasetCode,
   substituteIds,
+  resolveCreateResultSql,
   IDS_PLACEHOLDER,
+  DENY_SQL,
+  DENY_CONDITION,
   METADATA_MISSING,
+  CONTRACT_VIOLATION,
   MODE_UNAVAILABLE,
+  MODE_NO_OP,
 } from "arkveil";
 export type {
   ReadConditionRequest,
   ReadConditionResponse,
+  TouchConditionRequest,
+  TouchConditionResponse,
   WriteChecksRequest,
   WriteChecksResponse,
   WriteCheckId,
+  WriteOperation,
+  TouchOperation,
 } from "arkveil";

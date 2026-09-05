@@ -1,6 +1,6 @@
 {
   "name": "arkveil",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Runtime-agnostic core SDK for Arkveil — a lightweight, comprehensive ABAC platform for fine-grained access control.",
   "keywords": [
     "arkveil",

@@ -305,8 +305,10 @@ Request → @PermissionPoint Decorator → PermissionPointGuard → Arkveil Serv
 
 The module provides the core `Arkveil` client, so you can inject it and use
 the data-protection methods — `buildReadCondition` (a SQL condition to AND
-into your SELECTs) and `buildWriteChecks` (a boolean statement to run inside a
-mutation's transaction):
+into your SELECTs), `buildWriteChecks` (the pre-state `touchSql` / post-state
+`resultSql` checks to run inside a mutation's transaction, over the ids it
+targets), and `buildTouchCondition` (a condition to compose into a bulk
+`UPDATE`/`DELETE`'s WHERE clause):
 
 ```typescript
 import { Injectable } from "@nestjs/common";
@@ -329,9 +331,9 @@ export class PaymentsService {
 ```
 
 See the [`arkveil` core README](https://www.npmjs.com/package/arkveil) for the
-full contract, including when the write check must run relative to
-CREATE/UPDATE/DELETE, the `{{ids}}` template helper, and the fail-closed
-semantics.
+full contract: which check exists for CREATE/UPDATE/DELETE and when it runs,
+the CREATE `{{ids}}` template helper (`resolveCreateResultSql`), the two bulk
+recipes, and the fail-closed semantics.
 
 ## Best Practices
 
