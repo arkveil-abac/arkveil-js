@@ -10,6 +10,10 @@ yarn add @arkveil/nest
 pnpm add @arkveil/nest
 ```
 
+Supports NestJS 8 through 12, including the ESM applications `@nestjs/cli@12`
+scaffolds (`"type": "module"` with `nodenext` resolution). The package ships
+both ESM and CommonJS builds.
+
 ## Features
 
 - 🔒 **Declarative Permission Checks** - Use decorators to protect your endpoints
@@ -132,7 +136,11 @@ declare module "arkveil" {
 }
 ```
 
-That's all — `@PermissionPoint` is now typed everywhere:
+Import the file once from any module that is part of your application (a
+side-effect import is enough). Spell relative imports with the `.js` suffix —
+`import "./arkveil.generated.js"` — it is required in ESM projects and resolves
+in CommonJS projects too. That's all — `@PermissionPoint` is now typed
+everywhere:
 
 ```typescript
 @PermissionPoint("content-service.article-delete") // ✅ autocompletes
@@ -144,7 +152,7 @@ union instead:
 
 ```typescript
 import { createPermissionPoint } from "@arkveil/nest";
-import type { ArkveilCodes } from "./arkveil.generated";
+import type { ArkveilCodes } from "./arkveil.generated.js";
 
 // Re-export this and use it in place of the built-in PermissionPoint.
 export const PermissionPoint = createPermissionPoint<ArkveilCodes>();
@@ -196,6 +204,16 @@ ArkveilModule.forRoot({
   }),
 });
 ```
+
+### Denial reasons
+
+When a denial is not an ordinary policy deny, the kernel or the sidecar says
+why — `RUNTIME_REQUIRED`, `DATASOURCE_UNRESOLVED`, `DATASOURCE_ERROR`,
+`EVALUATION_ERROR`, `ATTRIBUTE_INCOMPATIBLE` (all exported as constants; see
+the `arkveil` README). The guard logs such a denial distinctly from a plain
+one and still answers `403` with the same message, so the reason reaches your
+logs but not your API clients. Read it yourself through
+`Arkveil.checkPermission(...)`, whose response carries `reason` and `mode`.
 
 ### Custom Denied Handler
 

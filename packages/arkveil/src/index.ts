@@ -1,5 +1,9 @@
 export {
   Arkveil,
+  RUNTIME_REQUIRED,
+  DATASOURCE_UNRESOLVED,
+  DATASOURCE_ERROR,
+  EVALUATION_ERROR,
   type ArkveilParams,
   type ArkveilCode,
   type ArkveilCodeRegistry,
@@ -19,6 +23,7 @@ export {
   DENY_SQL,
   DENY_CONDITION,
   METADATA_MISSING,
+  ATTRIBUTE_INCOMPATIBLE,
   CONTRACT_VIOLATION,
   MODE_UNAVAILABLE,
   MODE_NO_OP,

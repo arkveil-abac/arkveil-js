@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { Arkveil } from "../src/arkveil";
+import { ATTRIBUTE_INCOMPATIBLE } from "../src/index";
 import type { Logger } from "../src/types/logger";
 
 function makeLogger(): Logger {
@@ -819,5 +820,109 @@ describe("buildTouchCondition", () => {
     expect(logger.error).toHaveBeenCalledWith(
       expect.stringContaining("METADATA_MISSING"),
     );
+  });
+});
+
+describe("reason ATTRIBUTE_INCOMPATIBLE — a payload value of the wrong type", () => {
+  it("is exported beside METADATA_MISSING", () => {
+    expect(ATTRIBUTE_INCOMPATIBLE).toBe("ATTRIBUTE_INCOMPATIBLE");
+  });
+
+  it("passes a read condition through unchanged and warns, even though the SQL still admits rows", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          readCondition: `"t"."region" = 'EU'`,
+          mode: "NORMAL",
+          reason: "ATTRIBUTE_INCOMPATIBLE",
+        }),
+      ),
+    );
+
+    const logger = makeLogger();
+    const result = await makeClient(logger).buildReadCondition({
+      datasetCode: "billing.public.invoices",
+      user: { id: "u-42", clearance: "high" },
+      context: {},
+    });
+
+    expect(result).toEqual({
+      readCondition: `"t"."region" = 'EU'`,
+      mode: "NORMAL",
+      reason: "ATTRIBUTE_INCOMPATIBLE",
+    });
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Read condition for dataset billing.public.invoices reported ATTRIBUTE_INCOMPATIBLE",
+      ),
+    );
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it("passes write checks through unchanged and warns when the checks are not constant-false", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          touchSql: `SELECT (NOT EXISTS (SELECT 1 FROM "t" WHERE NOT ("t"."region" = 'EU') AND "t"."id" IN ('inv-1')))`,
+          resultSql: `SELECT (NOT EXISTS (SELECT 1 FROM "t" WHERE NOT (TRUE) AND "t"."id" IN ('inv-1')))`,
+          mode: "NORMAL",
+          reason: "ATTRIBUTE_INCOMPATIBLE",
+        }),
+      ),
+    );
+
+    const logger = makeLogger();
+    const result = await makeClient(logger).buildWriteChecks({
+      datasetCode: "billing.public.invoices",
+      user: { id: "u-42", clearance: "high" },
+      context: {},
+      operation: "UPDATE",
+      ids: ["inv-1"],
+    });
+
+    expect(result.reason).toBe("ATTRIBUTE_INCOMPATIBLE");
+    expect(result.touchSql).toContain(`"t"."region" = 'EU'`);
+    expect(result.resultSql).toContain("NOT (TRUE)");
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Write checks for dataset billing.public.invoices reported ATTRIBUTE_INCOMPATIBLE",
+      ),
+    );
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it("passes a touch condition through unchanged and warns", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          touchCondition: `"t"."status" = 'draft'`,
+          mode: "NORMAL",
+          reason: "ATTRIBUTE_INCOMPATIBLE",
+        }),
+      ),
+    );
+
+    const logger = makeLogger();
+    const result = await makeClient(logger).buildTouchCondition({
+      datasetCode: "billing.public.invoices",
+      user: { id: "u-42", clearance: "high" },
+      context: {},
+      operation: "UPDATE",
+    });
+
+    expect(result).toEqual({
+      touchCondition: `"t"."status" = 'draft'`,
+      mode: "NORMAL",
+      reason: "ATTRIBUTE_INCOMPATIBLE",
+    });
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Touch condition for dataset billing.public.invoices reported ATTRIBUTE_INCOMPATIBLE",
+      ),
+    );
+    expect(logger.error).not.toHaveBeenCalled();
   });
 });

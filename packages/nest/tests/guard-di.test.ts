@@ -6,7 +6,12 @@ import { ModuleRef } from "@nestjs/core";
 // against lived only in the bundle (esbuild emits no design:paramtypes, so
 // implicit constructor injection dies in the published package while the
 // TypeScript sources look fine). `pnpm run test` builds first.
-import { ArkveilModule, PermissionPointGuard } from "../dist/index.js";
+import {
+  ArkveilModule,
+  PermissionPointGuard,
+  ATTRIBUTE_INCOMPATIBLE,
+  METADATA_MISSING,
+} from "../dist/index.js";
 
 describe("PermissionPointGuard DI (built output)", () => {
   it("gets reflector and arkveil injected when Nest instantiates it", async () => {
@@ -26,5 +31,12 @@ describe("PermissionPointGuard DI (built output)", () => {
 
     expect((guard as any).reflector).toBeDefined();
     expect((guard as any).arkveil).toBeDefined();
+  });
+});
+
+describe("reason constants (built output)", () => {
+  it("re-exports the server-set reasons beside METADATA_MISSING", () => {
+    expect(METADATA_MISSING).toBe("METADATA_MISSING");
+    expect(ATTRIBUTE_INCOMPATIBLE).toBe("ATTRIBUTE_INCOMPATIBLE");
   });
 });

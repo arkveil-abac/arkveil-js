@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: Build, typecheck, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm run check-types
+      - run: pnpm run test
+      - name: Pack the publishable tarballs for the smoke jobs
+        run: |
+          mkdir -p tarballs
+          (cd packages/arkveil && pnpm pack --pack-destination "$GITHUB_WORKSPACE/tarballs")
+          (cd packages/nest && pnpm pack --pack-destination "$GITHUB_WORKSPACE/tarballs")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarballs
+          path: tarballs
+
+  nest-smoke:
+    name: NestJS ${{ matrix.nest }} smoke (${{ matrix.modules }})
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nest: 11
+            modules: CommonJS
+          - nest: 12
+            modules: ESM
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          name: tarballs
+          path: tarballs
+      # A fresh @nestjs/cli@12 scaffold does not install with npm 10 (arborist
+      # "edgesOut" crash); npm 11 handles it.
+      - run: npm install -g npm@11
+      - run: scripts/nest-smoke.sh "@nestjs/cli@${{ matrix.nest }}" tarballs
