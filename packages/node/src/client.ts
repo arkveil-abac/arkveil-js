@@ -39,8 +39,15 @@ export class ArkveilNodeClient<
           return;
         }
 
-        this.logger?.warn(`[Arkveil] Access denied to action ${code}`);
-        return this.handleDenied(req, res, next);
+        if (result.reason) {
+          this.logger?.warn(
+            `[Arkveil] Access denied to action ${code} with reason ${result.reason}: ` +
+              "the evaluation was degraded — not an ordinary policy deny (compare against the exported reason constants).",
+          );
+        } else {
+          this.logger?.warn(`[Arkveil] Access denied to action ${code}`);
+        }
+        return this.handleDenied(req, res, next, undefined, result.reason);
       } catch (error) {
         this.logger?.error("[Arkveil] permissionPoint error:", error);
         return this.handleDenied(req, res, next);
@@ -50,19 +57,25 @@ export class ArkveilNodeClient<
 
   /**
    * Node.js-specific implementation of handleDenied
-   * Works with Express, Fastify, and other Node.js HTTP frameworks
+   * Works with Express, Fastify, and other Node.js HTTP frameworks.
+   *
+   * A custom `onDenied` receives the server's `reason` as its third argument
+   * when the denial is not an ordinary policy deny; the default 403 body
+   * never carries it — the reason names infrastructure or payload defects
+   * and belongs in logs and handlers, not in HTTP responses.
    */
   override handleDenied(
     req: any,
     res: any,
     next: any,
-    onDenied?: (req: any, res: any) => void | Promise<void>,
+    onDenied?: (req: any, res: any, reason?: string) => void | Promise<void>,
+    reason?: string,
   ) {
     // Use custom handler if provided (either in request or parameter)
     const customHandler = onDenied || this.onDenied;
 
     if (customHandler) {
-      return customHandler(req, res);
+      return customHandler(req, res, reason);
     }
 
     // Node.js-specific denial handler

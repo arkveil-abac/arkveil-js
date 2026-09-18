@@ -1,5 +1,9 @@
 export {
   Arkveil,
+  RUNTIME_REQUIRED,
+  DATASOURCE_UNRESOLVED,
+  DATASOURCE_ERROR,
+  EVALUATION_ERROR,
   type ArkveilParams,
   type ArkveilCode,
   type ArkveilCodeRegistry,

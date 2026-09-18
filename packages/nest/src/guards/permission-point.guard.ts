@@ -50,7 +50,14 @@ export class PermissionPointGuard implements CanActivate {
       const result = await this.arkveil.checkPermission(permissionRequest);
 
       if (!result.granted) {
-        this.logger.warn(`[Arkveil] Access denied to action ${code}`);
+        if (result.reason) {
+          this.logger.warn(
+            `[Arkveil] Access denied to action ${code} with reason ${result.reason}: ` +
+              "the evaluation was degraded — not an ordinary policy deny (compare against the exported reason constants).",
+          );
+        } else {
+          this.logger.warn(`[Arkveil] Access denied to action ${code}`);
+        }
         throw new ForbiddenException(
           "You do not have permission to perform this action",
         );

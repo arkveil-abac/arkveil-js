@@ -138,8 +138,52 @@ export interface PermissionCheckRequest<
   context: TContext;
 }
 
+/**
+ * The `reason` a permission check carries when Arkveil Cloud alone cannot
+ * decide a rule: it reads a dataset (`exists <dataset> where …`), which only a
+ * connected `arkveil-runtime` sidecar can evaluate. The answer is
+ * `granted: false` — fail-safe, not a policy deny. Point `serviceUrl` at a
+ * sidecar for the real decision.
+ */
+export const RUNTIME_REQUIRED = "RUNTIME_REQUIRED";
+
+/**
+ * The `reason` a sidecar reports when a rule references a datasource it has
+ * no connection for (`arkveil.runtime.datasources.<name>.*` missing, or the
+ * mirror has not replicated the datasource yet). Denied fail-safe.
+ */
+export const DATASOURCE_UNRESOLVED = "DATASOURCE_UNRESOLVED";
+
+/**
+ * The `reason` a sidecar reports when the datasource query behind a rule
+ * failed (connection or SQL error). Denied fail-safe.
+ */
+export const DATASOURCE_ERROR = "DATASOURCE_ERROR";
+
+/**
+ * The `reason` reported when the engine itself failed to evaluate a rule.
+ * Denied fail-safe — a defect to investigate, not a rule at work.
+ */
+export const EVALUATION_ERROR = "EVALUATION_ERROR";
+
 export interface PermissionCheckResponse {
   granted: boolean;
+  /**
+   * Why a denial is not an ordinary policy deny, when it is not: one of
+   * {@link RUNTIME_REQUIRED}, {@link DATASOURCE_UNRESOLVED},
+   * {@link DATASOURCE_ERROR}, {@link EVALUATION_ERROR} or
+   * `ATTRIBUTE_INCOMPATIBLE` (a payload value of the wrong type for its
+   * attribute schema, evaluated as absent). A grant carries no reason. Absent
+   * on a plain policy deny.
+   */
+  reason?: string;
+  /**
+   * `"NORMAL"` unless the serving side is degraded — a sidecar past its
+   * staleness bound answers `"MIRROR_STALE"`, and the SDK itself answers
+   * `"UNAVAILABLE"` when the request failed. Honor the decision, watch the
+   * diagnostics.
+   */
+  mode: string;
 }
 
 export class Arkveil<
@@ -155,7 +199,11 @@ export class Arkveil<
 
   protected getUserAttributes?: (req: any) => TUser | Promise<TUser>;
   protected getContextAttributes?: (req: any) => TContext | Promise<TContext>;
-  protected onDenied?: (req: any, res: any) => void | Promise<void>;
+  protected onDenied?: (
+    req: any,
+    res: any,
+    reason?: string,
+  ) => void | Promise<void>;
 
   protected logger?: Logger;
 
@@ -209,7 +257,12 @@ export class Arkveil<
   }
 
   /**
-   * Check if a user has permission to perform an action
+   * Check if a user has permission to perform an action.
+   *
+   * The answer carries the server's `reason` when a denial is not an
+   * ordinary policy deny (see {@link PermissionCheckResponse.reason}) and
+   * the `mode` it was served in. Fail-closed: transport failures and non-OK
+   * responses are logged and return `{ granted: false, mode: "UNAVAILABLE" }`.
    */
   public async checkPermission(
     request: PermissionCheckRequest<TCode, TUser, TContext>,
@@ -240,12 +293,18 @@ export class Arkveil<
       }
 
       const data = (await response.json()) as PermissionCheckResponse;
+      this.flagDegradedMode(
+        "Permission check",
+        `action ${request.actionCode}`,
+        data.mode,
+      );
 
       return data;
     } catch (error) {
       this.logger?.error("Permission check failed:", error);
       return {
         granted: false,
+        mode: MODE_UNAVAILABLE,
       };
     }
   }
@@ -287,7 +346,11 @@ export class Arkveil<
         };
       }
       this.reportConfigurationGap("Read condition", datasetCode, data.reason);
-      this.flagDegradedMode("read condition", datasetCode, data.mode);
+      this.flagDegradedMode(
+        "read condition",
+        `dataset ${datasetCode}`,
+        data.mode,
+      );
       return data;
     } catch (error) {
       this.logger?.error(
@@ -364,7 +427,11 @@ export class Arkveil<
         );
       }
       this.reportConfigurationGap("Write checks", datasetCode, response.reason);
-      this.flagDegradedMode("write checks", datasetCode, response.mode);
+      this.flagDegradedMode(
+        "write checks",
+        `dataset ${datasetCode}`,
+        response.mode,
+      );
       return response;
     } catch (error) {
       this.logger?.error(
@@ -427,7 +494,11 @@ export class Arkveil<
         };
       }
       this.reportConfigurationGap("Touch condition", datasetCode, data.reason);
-      this.flagDegradedMode("touch condition", datasetCode, data.mode);
+      this.flagDegradedMode(
+        "touch condition",
+        `dataset ${datasetCode}`,
+        data.mode,
+      );
       return data;
     } catch (error) {
       this.logger?.error(
@@ -512,12 +583,12 @@ export class Arkveil<
    * flagged in diagnostics. */
   private flagDegradedMode(
     operation: string,
-    datasetCode: string,
+    subject: string,
     mode: string,
   ): void {
     if (mode !== "NORMAL") {
       this.logger?.warn(
-        `[Arkveil] ${operation} for dataset ${datasetCode} served in degraded mode "${mode}".`,
+        `[Arkveil] ${operation} for ${subject} served in degraded mode "${mode}".`,
       );
     }
   }
@@ -530,17 +601,21 @@ export class Arkveil<
    * @param res - Response object
    * @param next - Next function (optional)
    * @param onDenied - Custom denial handler (optional)
+   * @param reason - The server's reason when the denial is not an ordinary
+   *   policy deny (see {@link PermissionCheckResponse.reason}); handed to the
+   *   custom handler as its third argument
    */
   protected handleDenied(
     req: any,
     res: any,
     next: any,
-    onDenied?: (req: any, res: any) => void | Promise<void>,
+    onDenied?: (req: any, res: any, reason?: string) => void | Promise<void>,
+    reason?: string,
   ) {
     const customHandler = onDenied || this.onDenied;
 
     if (customHandler) {
-      return customHandler(req, res);
+      return customHandler(req, res, reason);
     }
 
     // Platform-specific implementations (Node.js, etc.) should override this method

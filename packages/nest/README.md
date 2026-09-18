@@ -205,6 +205,16 @@ ArkveilModule.forRoot({
 });
 ```
 
+### Denial reasons
+
+When a denial is not an ordinary policy deny, the kernel or the sidecar says
+why — `RUNTIME_REQUIRED`, `DATASOURCE_UNRESOLVED`, `DATASOURCE_ERROR`,
+`EVALUATION_ERROR`, `ATTRIBUTE_INCOMPATIBLE` (all exported as constants; see
+the `arkveil` README). The guard logs such a denial distinctly from a plain
+one and still answers `403` with the same message, so the reason reaches your
+logs but not your API clients. Read it yourself through
+`Arkveil.checkPermission(...)`, whose response carries `reason` and `mode`.
+
 ### Custom Denied Handler
 
 ```typescript

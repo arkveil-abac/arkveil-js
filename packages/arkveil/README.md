@@ -120,10 +120,27 @@ stay `Record<string, any>`, so untyped usage keeps working.
 
 ### `checkPermission(request)`
 
-Checks a permission and resolves to `{ granted: boolean }`. Network failures,
-timeouts, and transient `5xx` / `429` responses are retried with exponential
-backoff; if the check ultimately fails it resolves to `{ granted: false }`
-(fail-closed).
+Checks a permission and resolves to `{ granted, reason?, mode }`. Network
+failures, timeouts, and transient `5xx` / `429` responses are retried with
+exponential backoff; if the check ultimately fails it resolves to
+`{ granted: false, mode: "UNAVAILABLE" }` (fail-closed).
+
+`reason` is set when a denial is **not an ordinary policy deny**, so your
+logs, error handling and audit can tell an infrastructure incident from a
+rule at work. The values are exported as constants:
+
+| `reason`                 | Meaning                                                                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `RUNTIME_REQUIRED`       | The rule reads a dataset, which only a connected `arkveil-runtime` sidecar can evaluate; Arkveil Cloud alone answers `false`.         |
+| `DATASOURCE_UNRESOLVED`  | The sidecar has no connection for the referenced datasource, or the mirror has not replicated it yet.                                 |
+| `DATASOURCE_ERROR`       | The datasource query behind the rule failed.                                                                                          |
+| `EVALUATION_ERROR`       | The engine failed to evaluate the rule.                                                                                               |
+| `ATTRIBUTE_INCOMPATIBLE` | A `user` / `context` value does not match the type its attribute schema declares and was evaluated as absent (fix payload or schema). |
+
+A grant carries no `reason`. `mode` is `"NORMAL"` unless the serving side is
+degraded — a sidecar past its staleness bound serves `"MIRROR_STALE"` — and
+the SDK logs any other value as a warning. `onDenied` receives the reason as
+its third argument; a denial stays a denial either way.
 
 ## Row-level data protection
 

@@ -87,7 +87,7 @@ Extends the base Arkveil class with Node.js-specific middleware functionality.
 - `getUserAttributes` (function, optional): Extract user attributes from request
 - `getContextAttributes` (function, optional): Extract context attributes from request
 - `logger` (Logger, optional): Custom logger instance
-- `onDenied` (function, optional): Custom handler for denied access
+- `onDenied` (function, optional): Custom handler for denied access — `(req, res, reason?) => void`, where `reason` is set when the denial is not an ordinary policy deny (`RUNTIME_REQUIRED`, `DATASOURCE_UNRESOLVED`, `DATASOURCE_ERROR`, `EVALUATION_ERROR`, `ATTRIBUTE_INCOMPATIBLE` — exported as constants; see the `arkveil` README)
 
 #### Methods
 
@@ -105,7 +105,8 @@ Creates a middleware that checks permissions before allowing access to the route
 
 - Resolves user and context attributes from the configured `getUserAttributes` / `getContextAttributes`
 - Checks permission before allowing access to the route handler
-- Calls `onDenied` handler if permission is denied
+- Calls `onDenied` handler if permission is denied, passing the server's `reason` when the denial is not an ordinary policy deny; without a handler it answers `403` with a fixed body that never carries the reason
+- Logs a reasoned denial distinctly from a plain policy deny
 - Works with Express, Fastify, and other Node.js HTTP frameworks
 
 ## Row-level data protection

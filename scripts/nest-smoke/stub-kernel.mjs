@@ -12,7 +12,9 @@ createServer((req, res) => {
     if (req.method === "POST" && req.url === "/api/v1/abac/permissions/check") {
       const { user } = JSON.parse(body || "{}");
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ granted: user?.role === "manager" }));
+      res.end(
+        JSON.stringify({ granted: user?.role === "manager", mode: "NORMAL" }),
+      );
       return;
     }
     res.writeHead(404);
