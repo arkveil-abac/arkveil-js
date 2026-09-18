@@ -325,6 +325,15 @@ promise.
 - `mode` is `"NORMAL"` unless the serving side is degraded (e.g. a sidecar
   past its staleness bound). Any other value is logged as a warning — honor
   the SQL, watch the diagnostics.
+- `reason: "ATTRIBUTE_INCOMPATIBLE"` means a value in `user` or `context` does
+  not match the type its attribute schema declares (`"u-42"` for a `uuid`
+  `user.id`, `"abc"` for an `integer`) and was evaluated as **absent**. It is
+  not a deny: the SQL is applied exactly as returned and may still admit rows
+  (an ownership filter folded away, a regional one survived). The SDK logs it
+  as a warning naming the dataset; compare against the exported
+  `ATTRIBUTE_INCOMPATIBLE` constant. Fix the payload or the schema, not the
+  policy. A missing key or a JSON `null` is an optional attribute and stays
+  silent.
 
 Field-level masking (PROJECTION policies) has no HTTP contract yet and is not
 part of this SDK.

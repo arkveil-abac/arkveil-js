@@ -8,6 +8,7 @@ import {
   DENY_SQL,
   denyWriteChecks,
   METADATA_MISSING,
+  ATTRIBUTE_INCOMPATIBLE,
   MODE_NO_OP,
   MODE_UNAVAILABLE,
   normalizeDatasetCode,
@@ -482,6 +483,10 @@ export class Arkveil<
    * registered in Arkveil — and `CONTRACT_VIOLATION` a response the SDK could
    * not honor. Both deny, and both are logged distinctly from an ordinary
    * policy deny so operators see something to fix rather than a rule at work.
+   * `ATTRIBUTE_INCOMPATIBLE` names a payload value of the wrong type for its
+   * attribute schema: it does not deny by itself — the SQL is applied exactly
+   * as returned — but it is a defect in the payload or the schema, so it is
+   * logged as a warning rather than passed over in silence.
    */
   private reportConfigurationGap(
     operation: string,
@@ -492,6 +497,12 @@ export class Arkveil<
       this.logger?.error(
         `[Arkveil] ${operation} for dataset ${datasetCode} denied with reason ${METADATA_MISSING}: ` +
           "the dataset is not registered in Arkveil (configuration gap, not a policy deny).",
+      );
+    } else if (reason === ATTRIBUTE_INCOMPATIBLE) {
+      this.logger?.warn(
+        `[Arkveil] ${operation} for dataset ${datasetCode} reported ${ATTRIBUTE_INCOMPATIBLE}: ` +
+          "an attribute value in the request does not match its declared schema type and was " +
+          "evaluated as absent (fix the payload or the schema). The SQL is applied as returned.",
       );
     }
   }
