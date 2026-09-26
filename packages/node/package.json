@@ -48,7 +48,8 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsup"
+    "build": "tsup",
+    "test": "vitest run"
   },
   "dependencies": {
     "arkveil": "workspace:*"
@@ -56,6 +57,7 @@
   "devDependencies": {
     "@types/node": "^22",
     "tsup": "^8.5.1",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^2.1.9"
   }
 }

@@ -148,7 +148,7 @@ declare module "arkveil" {
 
 ```typescript
 import { Arkveil } from "@arkveil/node";
-import "./arkveil.generated"; // side-effect import applies the augmentation
+import "./arkveil.generated.js"; // side-effect import applies the augmentation
 
 const arkveil = new Arkveil({
   serviceUrl,
@@ -184,7 +184,7 @@ import type {
   ArkveilCodes,
   ArkveilUserAttributes,
   ArkveilContextAttributes,
-} from "./arkveil.generated";
+} from "./arkveil.generated.js";
 
 const arkveil = new Arkveil<
   ArkveilCodes,

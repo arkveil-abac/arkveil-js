@@ -23,7 +23,9 @@ pnpm --filter arkveil run build          # build a single package (or: turbo run
 pnpm --filter express-example exec tsc --noEmit   # typecheck the example
 ```
 
-**Testing:** vitest is wired up in `packages/arkveil` (`pnpm run test` at the root runs `turbo run test`; tests live in `packages/arkveil/tests/` and mock global `fetch` — no live calls). `node`/`nest` have no tests yet. `pnpm run lint` is a no-op (no package defines a `lint` script).
+**Testing:** vitest is wired up in `packages/arkveil` (`pnpm run test` at the root runs `turbo run test`; tests live in `packages/arkveil/tests/` and mock global `fetch` — no live calls) and in `packages/nest` (`tests/guard-di.test.ts` runs against the **built** output, so `pnpm --filter @arkveil/nest run test` builds first). `node` has no tests yet. `pnpm run lint` is a no-op (no package defines a `lint` script).
+
+**CI:** `.github/workflows/ci.yml` builds, typechecks and tests on push/PR, then runs `scripts/nest-smoke.sh` on fresh `@nestjs/cli@11` (CommonJS) and `@nestjs/cli@12` (ESM) scaffolds: it installs the packed tarballs with no peer flags, drops in the getting-started walkthrough from `scripts/nest-smoke/` (relative imports carry the `.js` suffix — required on ESM scaffolds, valid on CommonJS ones) and checks a grant and a deny against the stub kernel in `scripts/nest-smoke/stub-kernel.mjs`. Run it locally the same way (`scripts/nest-smoke.sh "@nestjs/cli@12" <dir with the pnpm-packed tarballs>`; a fresh Nest 12 scaffold needs npm 11).
 
 `pnpm run build` is wired so turbo's `build` `dependsOn` `^build` — **core builds before `node`/`nest`**. After changing core types, rebuild core (or run the top-level build) so the dependents typecheck against the new output.
 

@@ -108,6 +108,17 @@ export const DENY_CONDITION = "FALSE";
 export const METADATA_MISSING = "METADATA_MISSING";
 
 /**
+ * The server-set `reason` marking an evaluation that read a payload value of
+ * the wrong type for its attribute schema — `"u-42"` where `user.id` is a
+ * `uuid`, `"abc"` where the schema says `integer`. The engine evaluated that
+ * value as absent and the SQL stands as returned: it may still admit rows, so
+ * this is not a synonym for a deny and never widens or narrows what the
+ * server sent. Fix the payload or the schema, not the policy. A missing key or
+ * a JSON `null` is an optional attribute and carries no reason.
+ */
+export const ATTRIBUTE_INCOMPATIBLE = "ATTRIBUTE_INCOMPATIBLE";
+
+/**
  * The client-synthesized `reason` marking a response that did not satisfy the
  * contract for the operation asked about — a required field is missing, or an
  * `{{ids}}` template turned up where the ids were supposed to be inlined.
@@ -161,8 +172,10 @@ export interface ReadConditionResponse {
    */
   mode: string;
   /**
-   * Set on fail-closed responses; see {@link METADATA_MISSING} and
-   * {@link CONTRACT_VIOLATION}.
+   * Why the answer is not an ordinary policy result. Set by the server —
+   * {@link METADATA_MISSING} on a fail-closed response, {@link ATTRIBUTE_INCOMPATIBLE}
+   * next to a condition that may well admit rows — or by the SDK
+   * ({@link CONTRACT_VIOLATION}). Apply the condition as returned either way.
    */
   reason?: string;
 }
